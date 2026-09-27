@@ -9,7 +9,10 @@ One function most callers need:
         sys.exit(1)
 
 Providers (Decide, Jev, local GLiNER2, ModernBERT) are pluggable and registered
-on import. Tasks (the head/label sets that name the questions) are
+on import. Candidate providers (CLM-8B, openjev, Kev, Tev1, Laya, the GLiNER
+1B/multilingual variants) are wired but opt-in: they speak an existing wire and
+stay disabled until listed in `providers.enabled` and their endpoint is up.
+Tasks (the head/label sets that name the questions) are
 data-driven; eight are pre-registered (change, commit_audit, deps_risk,
 docs_drift, api_drift, pr_gate, issue_triage, safety). Load more from TOML or
 JSON via `sys1.load_tasks_file(...)`.
@@ -24,13 +27,20 @@ this same `classify()`. `pip install 'sys1[service]'` pulls the extras.
 from __future__ import annotations
 
 from .api import cascade_classify, classify, health_report
-from .config import DEFAULTS, api_key_for, load_config
+from .config import DEFAULTS, api_key_for, load_config, state_file_path, write_state_flags
 from .gating import final_exit_code, interpret
 from .providers import (
     REGISTRY,
+    availability_reason,
     available_providers,
     call_provider,
+    enabled_set,
     is_available,
+    is_configured,
+    is_provider_enabled,
+    probe,
+    provider_config_view,
+    provider_report,
     register,
     resolve_providers,
 )
@@ -64,7 +74,7 @@ from .types import (
     make_score,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     # core
@@ -75,6 +85,8 @@ __all__ = [
     "load_config",
     "api_key_for",
     "DEFAULTS",
+    "state_file_path",
+    "write_state_flags",
     # types
     "Head",
     "HeadKind",
@@ -94,6 +106,13 @@ __all__ = [
     "is_available",
     "available_providers",
     "resolve_providers",
+    "enabled_set",
+    "is_provider_enabled",
+    "is_configured",
+    "availability_reason",
+    "provider_report",
+    "provider_config_view",
+    "probe",
     # tasks
     "register_task",
     "get_task",

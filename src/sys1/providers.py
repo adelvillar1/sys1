@@ -14,16 +14,17 @@ dashboards see the same keys: `http_status`, `latency_ms`, `retries`,
 from __future__ import annotations
 
 import json
-import os
 import re
+import socket
 import subprocess
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
 
-from .config import api_key_for
+from .config import api_key_for, load_config
 from .parsers import parse_decide, parse_jev, parse_local, parse_modernbert
 from .types import Answer, Head, Provider
 
@@ -141,79 +142,221 @@ def _sleep_backoff(backoff: float, attempt: int) -> None:
     time.sleep(backoff * (attempt + 1))
 
 
-# ── Decide provider (hosted Fastino, OpenAI-compatible) ───────────────────────
+# ── Wire factories ────────────────────────────────────────────────────────────
+#
+# Every provider's classify()/is_available() is generated from its `wire`
+# family + config keys (`{pid}_api_url`, `{pid}_model`, `{pid}_api_key_env`,
+# `{pid}_requires_key`). Adding a new model that speaks an existing wire is a
+# config entry + one register() call — no new call code.
+
+def _openai_wire(pid: str, *, system_prompt: str | None = None):
+    """Classify fn for OpenAI-compatible chat-completions with a `classifications` schema."""
+
+    def _fn(text: str, heads: list[Head], cfg: dict, telemetry: dict) -> dict[str, Answer]:
+        pcfg = cfg["providers"]
+        api_key = api_key_for(pid, cfg)
+        if _requires_key(pid, cfg) and not api_key:
+            raise RuntimeError(f"${pcfg.get(f'{pid}_api_key_env', pid.upper() + '_API_KEY')} not set")
+        url = pcfg.get(f"{pid}_api_url", "")
+        if not url:
+            raise RuntimeError(f"providers.{pid}_api_url not configured")
+        body = {
+            "model": pcfg.get(f"{pid}_model", pid),
+            "messages": [
+                {
+                    "role": "system",
+                    "content": system_prompt
+                    or "You are a precise change classifier. Answer only with the requested labels.",
+                },
+                {
+                    "role": "user",
+                    "content": f"Review the following text and answer every question.\n\n{text}",
+                },
+            ],
+            "temperature": 0.0,
+            "schema": {"classifications": [h.to_decide_head() for h in heads]},
+        }
+        resp = http_post_json(
+            url,
+            body,
+            api_key=api_key,
+            timeout=pcfg["request_timeout_seconds"],
+            max_retries=pcfg["max_retries"],
+            backoff=pcfg["retry_backoff_seconds"],
+            telemetry=telemetry,
+            label=pid,
+        )
+        return parse_decide(resp, heads)
+
+    return _fn
 
 
-def _decide_classify(text: str, heads: list[Head], cfg: dict, telemetry: dict) -> dict[str, Answer]:
-    pcfg = cfg["providers"]
-    api_key = api_key_for("decide", cfg)
-    if not api_key:
-        raise RuntimeError(f"{pcfg.get('decide_api_key_env', 'FASTINO_API_KEY')} not set")
+def _jev_wire(pid: str):
+    """Classify fn for the TypeSafe /v1/systemone shape ({state, questions})."""
 
-    wire = [h.to_decide_head() for h in heads]
-    body = {
-        "model": pcfg["decide_model"],
-        "messages": [
-            {
-                "role": "system",
-                "content": "You are a precise change classifier. Answer only with the requested labels.",
-            },
-            {
-                "role": "user",
-                "content": f"Review the following text and answer every question.\n\n{text}",
-            },
-        ],
-        "temperature": 0.0,
-        "schema": {"classifications": wire},
-    }
-    resp = http_post_json(
-        pcfg["decide_api_url"],
-        body,
-        api_key=api_key,
-        timeout=pcfg["request_timeout_seconds"],
-        max_retries=pcfg["max_retries"],
-        backoff=pcfg["retry_backoff_seconds"],
-        telemetry=telemetry,
-        label="decide",
-    )
-    return parse_decide(resp, heads)
+    def _fn(text: str, heads: list[Head], cfg: dict, telemetry: dict) -> dict[str, Answer]:
+        pcfg = cfg["providers"]
+        api_key = api_key_for(pid, cfg)
+        if _requires_key(pid, cfg) and not api_key:
+            raise RuntimeError(f"${pcfg.get(f'{pid}_api_key_env', pid.upper() + '_API_KEY')} not set")
+        url = pcfg.get(f"{pid}_api_url", "")
+        if not url:
+            raise RuntimeError(f"providers.{pid}_api_url not configured")
+        body = {
+            "model": pcfg.get(f"{pid}_model", pid),
+            "state": {"text": text[: cfg["scan"]["max_diff_chars"]]},
+            "questions": {h.id: h.to_jev_head() for h in heads},
+        }
+        resp = http_post_json(
+            url,
+            body,
+            api_key=api_key,
+            timeout=pcfg["request_timeout_seconds"],
+            max_retries=pcfg["max_retries"],
+            backoff=pcfg["retry_backoff_seconds"],
+            telemetry=telemetry,
+            label=pid,
+        )
+        return parse_jev(resp, heads)
+
+    return _fn
 
 
-def _decide_available(cfg: dict) -> bool:
-    return bool(api_key_for("decide", cfg))
+def _gliner_wire(pid: str, model_key: str = "local_model"):
+    """Classify fn for GLiNER2-family models run through the local uv venv."""
+
+    def _fn(text: str, heads: list[Head], cfg: dict, telemetry: dict) -> dict[str, Answer]:
+        venv_python = _local_venv_python(cfg)
+        if not venv_python.exists():
+            raise RuntimeError(f"Local GLiNER venv not found at {venv_python}")
+
+        tasks = {h.id: h.to_local_head() for h in heads}
+        max_chars = cfg["scan"]["max_diff_chars"]
+        model = cfg["providers"].get(model_key) or cfg["providers"]["local_model"]
+
+        t0 = time.monotonic()
+        proc = subprocess.run(
+            [str(venv_python), "-c", _LOCAL_INLINE, model, text[:max_chars], json.dumps(tasks)],
+            capture_output=True,
+            text=True,
+            timeout=cfg["providers"]["request_timeout_seconds"],
+        )
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        telemetry["latency_ms"] = latency_ms
+        telemetry["retries"] = 0
+        if proc.returncode != 0:
+            telemetry["error_kind"] = "subprocess"
+            telemetry["stderr"] = (proc.stderr or "")[:300]
+            telemetry["structured_ok"] = False
+            raise RuntimeError(f"Local GLiNER failed: {proc.stderr[:300]}")
+
+        try:
+            parsed = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            parsed = {"_raw": proc.stdout[:200]}
+            telemetry["error_kind"] = "json"
+            telemetry["structured_ok"] = False
+
+        out = parse_local(parsed, heads)
+        null_count = sum(1 for a in out.values() if a.get("label") is None and a.get("noul") is None)
+        telemetry["null_label_count"] = null_count
+        telemetry["structured_ok"] = True
+        return out
+
+    return _fn
 
 
-# ── Jev provider (TypeSafe /v1/systemone) ────────────────────────────────────
+# ── Availability primitives (flag-independent; the gate lives in the registry) ─
 
 
-def _jev_classify(text: str, heads: list[Head], cfg: dict, telemetry: dict) -> dict[str, Answer]:
-    pcfg = cfg["providers"]
-    api_key = api_key_for("jev", cfg)
-    if not api_key:
-        raise RuntimeError(f"{pcfg.get('jev_api_key_env', 'TYPESAFE_API_KEY')} not set")
+def _requires_key(pid: str, cfg: dict) -> bool:
+    """
+    Whether the provider's API key env var is mandatory.
 
-    payload_state: dict[str, Any] = {"text": text[: cfg["scan"]["max_diff_chars"]]}
-    payload_questions: dict[str, dict] = {h.id: h.to_jev_head() for h in heads}
-    body = {
-        "model": pcfg["jev_model"],
-        "state": payload_state,
-        "questions": payload_questions,
-    }
-    resp = http_post_json(
-        pcfg["jev_api_url"],
-        body,
-        api_key=api_key,
-        timeout=pcfg["request_timeout_seconds"],
-        max_retries=pcfg["max_retries"],
-        backoff=pcfg["retry_backoff_seconds"],
-        telemetry=telemetry,
-        label="jev",
-    )
-    return parse_jev(resp, heads)
+    - Core hosted providers (decide, jev) always require one.
+    - Remote candidate endpoints (e.g. api.together.xyz for Tev1) require one.
+    - Self-hosted candidates (localhost URLs) default to no auth; the key env
+      var, if set, is sent as a bearer token anyway. Force either way with
+      `{pid}_requires_key = true/false` in config.
+    """
+    pcfg = cfg.get("providers", {})
+    explicit = pcfg.get(f"{pid}_requires_key")
+    if explicit is not None:
+        return bool(explicit)
+    if pid in ("decide", "jev"):
+        return True
+    url = pcfg.get(f"{pid}_api_url", "")
+    if url:
+        return not _is_localhost(url)
+    return False
 
 
-def _jev_available(cfg: dict) -> bool:
-    return bool(api_key_for("jev", cfg))
+def _key_available(pid: str, cfg: dict) -> bool:
+    """True when no key is required, or the key env var is set."""
+    return (not _requires_key(pid, cfg)) or bool(api_key_for(pid, cfg))
+
+
+def _tcp_open(url: str, timeout: float = 0.5) -> bool:
+    """Fast reachability probe for a self-hosted endpoint (connects, no request sent)."""
+    try:
+        parts = urllib.parse.urlsplit(url)
+        host = parts.hostname or "127.0.0.1"
+        port = parts.port or (443 if parts.scheme == "https" else 80)
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _is_localhost(url: str) -> bool:
+    host = urllib.parse.urlsplit(url).hostname or ""
+    return host in ("127.0.0.1", "localhost", "::1", "0.0.0.0")
+
+
+def _url_for(pid: str, cfg: dict) -> str:
+    return cfg.get("providers", {}).get(f"{pid}_api_url", "")
+
+
+def _hosted_available(pid: str):
+    """Hosted providers: available iff the required key is present."""
+
+    def _fn(cfg: dict) -> bool:
+        return _key_available(pid, cfg)
+
+    return _fn
+
+
+def _self_hosted_available(pid: str):
+    """Self-hosted candidates: configured + key (when required) + a listener on the port."""
+
+    def _fn(cfg: dict) -> bool:
+        url = _url_for(pid, cfg)
+        if not url:
+            return False
+        if not _key_available(pid, cfg):
+            return False
+        return _tcp_open(url)
+
+    return _fn
+
+
+def _venv_available(_cfg: dict) -> bool:
+    try:
+        return _local_venv_python(_cfg).exists()
+    except Exception:
+        return False
+
+
+def _endpoint_configured(pid: str):
+    """Static config check for the dashboard: endpoint present, key satisfied (no TCP)."""
+
+    def _fn(cfg: dict) -> bool:
+        url = _url_for(pid, cfg)
+        if not url:
+            return False
+        return _key_available(pid, cfg)
+
+    return _fn
 
 
 # ── Local GLiNER2 provider (subprocess into uv venv) ─────────────────────────
@@ -252,52 +395,6 @@ for head_id, task in tasks.items():
 sys.stdout = old_stdout
 print(json.dumps(results))
 """
-
-
-def _local_classify(text: str, heads: list[Head], cfg: dict, telemetry: dict) -> dict[str, Answer]:
-    venv_python = _local_venv_python(cfg)
-    if not venv_python.exists():
-        raise RuntimeError(f"Local GLiNER venv not found at {venv_python}")
-
-    tasks = {h.id: h.to_local_head() for h in heads}
-    max_chars = cfg["scan"]["max_diff_chars"]
-    model = cfg["providers"]["local_model"]
-
-    t0 = time.monotonic()
-    proc = subprocess.run(
-        [str(venv_python), "-c", _LOCAL_INLINE, model, text[:max_chars], json.dumps(tasks)],
-        capture_output=True,
-        text=True,
-        timeout=cfg["providers"]["request_timeout_seconds"],
-    )
-    latency_ms = int((time.monotonic() - t0) * 1000)
-    telemetry["latency_ms"] = latency_ms
-    telemetry["retries"] = 0
-    if proc.returncode != 0:
-        telemetry["error_kind"] = "subprocess"
-        telemetry["stderr"] = (proc.stderr or "")[:300]
-        telemetry["structured_ok"] = False
-        raise RuntimeError(f"Local GLiNER failed: {proc.stderr[:300]}")
-
-    try:
-        parsed = json.loads(proc.stdout)
-    except json.JSONDecodeError:
-        parsed = {"_raw": proc.stdout[:200]}
-        telemetry["error_kind"] = "json"
-        telemetry["structured_ok"] = False
-
-    out = parse_local(parsed, heads)
-    null_count = sum(1 for a in out.values() if a.get("label") is None and a.get("noul") is None)
-    telemetry["null_label_count"] = null_count
-    telemetry["structured_ok"] = True
-    return out
-
-
-def _local_available(cfg: dict) -> bool:
-    try:
-        return _local_venv_python(cfg).exists()
-    except Exception:
-        return False
 
 
 def _local_venv_python(cfg: dict) -> Path:
@@ -425,31 +522,42 @@ def register(provider: Provider) -> Provider:
     return provider
 
 
+# ── core providers (tier="core": enabled by default) ─────────────────────────
+
 register(
     Provider(
         id="decide",
         name="Fastino GLiNER-2.5-Decide (hosted)",
-        classify=_decide_classify,
-        is_available=_decide_available,
+        classify=_openai_wire("decide"),
+        is_available=_hosted_available("decide"),
+        is_configured=_hosted_available("decide"),
         description="OpenAI-compatible chat-completions with structured `classifications` schema.",
+        tier="core",
+        wire="openai",
     )
 )
 register(
     Provider(
         id="jev",
         name="TypeSafe Jev",
-        classify=_jev_classify,
-        is_available=_jev_available,
+        classify=_jev_wire("jev"),
+        is_available=_hosted_available("jev"),
+        is_configured=_hosted_available("jev"),
         description="POST /v1/systemone with {state, questions}. Three primitives: choice, noul, score.",
+        tier="core",
+        wire="jev",
     )
 )
 register(
     Provider(
         id="local",
         name="GLiNER2.5-Decide (local venv)",
-        classify=_local_classify,
-        is_available=_local_available,
+        classify=_gliner_wire("local", "local_model"),
+        is_available=_venv_available,
+        is_configured=_venv_available,
         description="Subprocess into a uv-managed venv running `gliner2`. No network.",
+        tier="core",
+        wire="gliner",
     )
 )
 register(
@@ -458,40 +566,326 @@ register(
         name="ModernBERT-base (eval, no fine-tuning)",
         classify=_modernbert_classify,
         is_available=_modernbert_available,
+        is_configured=_modernbert_available,
         description="Sentence-encoder cosine similarity. Calibration / comparison use, not production.",
+        tier="core",
+        wire="modernbert",
+    )
+)
+
+# ── candidate providers (tier="candidate": opt-in via providers.enabled) ──────
+#
+# These speak an existing wire; the classify fns are real and fully functional.
+# They stay disabled until named in `providers.enabled` (TOML/env/state-file),
+# and report `configured=False` / `available=False` until their endpoint is
+# actually set up. When you stand up one of these models locally, point its
+# `{pid}_api_url` at it and flip the flag — no code change needed.
+
+register(
+    Provider(
+        id="clm",
+        name="CLM-8B (Contrastive-LM, self-hosted)",
+        classify=_jev_wire("clm"),
+        is_available=_self_hosted_available("clm"),
+        is_configured=_endpoint_configured("clm"),
+        description="Stanford/NVIDIA state-action scorer. TypeSafe /v1/systemone wire-compatible: "
+        "run `clm-serve`, set clm_api_url, enable.",
+        tier="candidate",
+        wire="jev",
+        meta={"setup": "clm-serve on 127.0.0.1:8451 (or any /v1/systemone-compatible host)"},
+    )
+)
+register(
+    Provider(
+        id="openjev",
+        name="openjev / JevK5 (community reproduction)",
+        classify=_jev_wire("openjev"),
+        is_available=_self_hosted_available("openjev"),
+        is_configured=_endpoint_configured("openjev"),
+        description="Open reproduction of Jev behind the same /v1/systemone shape. Not TypeSafe's Jev.",
+        tier="candidate",
+        wire="jev",
+        meta={"setup": "serve openjev behind a /v1/systemone-compatible endpoint"},
+    )
+)
+register(
+    Provider(
+        id="kev",
+        name="Kev (Jared Palmer, Apache 2.0)",
+        classify=_openai_wire("kev"),
+        is_available=_self_hosted_available("kev"),
+        is_configured=_endpoint_configured("kev"),
+        description="0.8B/4B/9B Apache-2.0 decision model. Serve behind any OpenAI-compatible "
+        "endpoint (vLLM, Ollama /v1, llama.cpp); set kev_model to match.",
+        tier="candidate",
+        wire="openai",
+        meta={"setup": "vllm serve kev-4b (or Ollama) behind /v1/chat/completions"},
+    )
+)
+register(
+    Provider(
+        id="tev1",
+        name="Tev1 (Together AI)",
+        classify=_openai_wire("tev1"),
+        is_available=_hosted_available("tev1"),
+        is_configured=_endpoint_configured("tev1"),
+        description="Together AI decision model (Qwen3.5-4B fine-tune). Hosted, OpenAI-compatible; "
+        "needs TOGETHER_API_KEY. Confirm tev1_model against Together's catalog.",
+        tier="candidate",
+        wire="openai",
+        meta={"setup": "export TOGETHER_API_KEY=... and confirm tev1_model"},
+    )
+)
+register(
+    Provider(
+        id="laya",
+        name="Laya (Convai, 421M ModernBERT)",
+        classify=_openai_wire("laya"),
+        is_available=_self_hosted_available("laya"),
+        is_configured=_endpoint_configured("laya"),
+        description="Convai's 421M decision model. Wire assumptions are provisional — "
+        "adjust laya_api_url / the wire factory when its serving shape is confirmed.",
+        tier="candidate",
+        wire="openai",
+        meta={"setup": "serve Laya behind an OpenAI-compatible endpoint (wire unconfirmed)"},
+    )
+)
+register(
+    Provider(
+        id="decide_1b",
+        name="GLiNER2.5-Decide-1B (local venv)",
+        classify=_gliner_wire("decide_1b", "decide_1b_model"),
+        is_available=_venv_available,
+        is_configured=_venv_available,
+        description="1.19B Ettin-encoder variant of the local Decide model; same venv, bigger head.",
+        tier="candidate",
+        wire="gliner",
+        meta={"setup": "uv pip install gliner2 in local_venv; first run downloads the model"},
+    )
+)
+register(
+    Provider(
+        id="decide_multi",
+        name="GLiNER2.5-multi-Decide (local venv)",
+        classify=_gliner_wire("decide_multi", "decide_multi_model"),
+        is_available=_venv_available,
+        is_configured=_venv_available,
+        description="287M multilingual boundary variant of the local Decide model.",
+        tier="candidate",
+        wire="gliner",
+        meta={"setup": "uv pip install gliner2 in local_venv; first run downloads the model"},
     )
 )
 
 
+# ── provider flags ────────────────────────────────────────────────────────────
+
+_CORE_TOKEN = "core"
+_ALL_TOKENS = frozenset({"all", "*"})
+_CANDIDATE_TOKENS = frozenset({"optin", "opt_in", "opt-in", "experimental", "candidates", "candidate"})
+
+
+def _split_ids(raw) -> list[str]:
+    if isinstance(raw, (list, tuple, set)):
+        return [str(x).strip().lower() for x in raw if str(x).strip()]
+    return [p.strip().lower() for p in re.split(r"[+,;\s]+", str(raw or "")) if p.strip()]
+
+
+def enabled_set(cfg: dict) -> set[str]:
+    """
+    Resolve `providers.enabled` tokens against the registry, minus `providers.disabled`.
+
+    Tokens: "core" (all tier=core), "all"/"*" (every registered id),
+    "optin"/"candidates"/"experimental" (every tier=candidate), or explicit ids.
+    An explicit id that isn't registered is kept anyway (custom providers may
+    register later); the disabled list always wins.
+    """
+    pcfg = cfg.get("providers", {})
+    tokens = _split_ids(pcfg.get("enabled", _CORE_TOKEN)) or [_CORE_TOKEN]
+    ids: set[str] = set()
+    for tok in tokens:
+        if tok == _CORE_TOKEN:
+            ids |= {p.id for p in REGISTRY.values() if p.tier == "core"}
+        elif tok in _ALL_TOKENS:
+            ids |= set(REGISTRY)
+        elif tok in _CANDIDATE_TOKENS:
+            ids |= {p.id for p in REGISTRY.values() if p.tier != "core"}
+        else:
+            ids.add(tok)
+    ids -= set(_split_ids(pcfg.get("disabled", "")))
+    return ids
+
+
+def is_provider_enabled(pid: str, cfg: dict) -> bool:
+    return str(pid).strip().lower() in enabled_set(cfg)
+
+
+def is_configured(pid: str, cfg: dict) -> bool:
+    """Static config check (endpoint present + key satisfied), ignoring the flag."""
+    provider = REGISTRY.get(pid)
+    if provider is None:
+        return False
+    check = provider.is_configured or provider.is_available
+    try:
+        return bool(check(cfg))
+    except Exception:
+        return False
+
+
+def availability_reason(pid: str, cfg: dict) -> str:
+    """Human sentence for why a provider is off — the doctor/dashboard text."""
+    provider = REGISTRY.get(pid)
+    if provider is None:
+        return "not registered"
+    if pid not in enabled_set(cfg):
+        return "disabled by providers.enabled flag"
+    pcfg = cfg.get("providers", {})
+    if provider.wire in ("gliner", "modernbert"):
+        venv = pcfg.get("local_venv", "/private/tmp/gliner-decide")
+        return "available" if _venv_available(cfg) else f"venv not found at {venv}"
+    if provider.is_available(cfg):
+        return "available"
+    url = _url_for(pid, cfg)
+    if not url:
+        return f"providers.{pid}_api_url not set"
+    if _requires_key(pid, cfg) and not api_key_for(pid, cfg):
+        env = pcfg.get(f"{pid}_api_key_env") or f"{pid.upper()}_API_KEY"
+        return f"missing API key: ${env}"
+    if _is_localhost(url) and not _tcp_open(url):
+        return f"no listener on {url}"
+    return "unavailable"
+
+
+def provider_config_view(pid: str, cfg: dict) -> dict:
+    """The config surface a dashboard needs per provider (never the key value)."""
+    pcfg = cfg.get("providers", {})
+    wire = REGISTRY[pid].wire if pid in REGISTRY else "openai"
+    if wire == "gliner":
+        model_key = {"local": "local_model", "decide_1b": "decide_1b_model", "decide_multi": "decide_multi_model"}.get(
+            pid, f"{pid}_model"
+        )
+        return {"kind": "venv", "venv": pcfg.get("local_venv", ""), "model": pcfg.get(model_key, "")}
+    if wire == "modernbert":
+        return {"kind": "venv", "venv": pcfg.get("local_venv", ""), "model": pcfg.get("modernbert_model", "")}
+    return {
+        "kind": "url",
+        "url": _url_for(pid, cfg),
+        "model": pcfg.get(f"{pid}_model", pid),
+        "api_key_env": pcfg.get(f"{pid}_api_key_env") or None,
+        "requires_key": _requires_key(pid, cfg),
+        "api_key_set": bool(api_key_for(pid, cfg)),
+    }
+
+
+def probe(pid: str, cfg: dict | None = None, timeout: float = 1.0) -> dict:
+    """Cheap reachability probe: TCP connect for URL providers, stat for venvs."""
+    cfg = cfg or load_config()
+    provider = REGISTRY.get(pid)
+    if provider is None:
+        return {"ok": False, "detail": "not registered"}
+    t0 = time.monotonic()
+    if provider.wire in ("gliner", "modernbert"):
+        ok = _venv_available(cfg)
+        return {
+            "ok": ok,
+            "latency_ms": int((time.monotonic() - t0) * 1000),
+            "detail": f"venv at {cfg['providers'].get('local_venv', '')}" + ("" if ok else " (missing)"),
+        }
+    url = _url_for(pid, cfg)
+    if not url:
+        return {"ok": False, "detail": f"providers.{pid}_api_url not set"}
+    parts = urllib.parse.urlsplit(url)
+    host = parts.hostname or "127.0.0.1"
+    port = parts.port or (443 if parts.scheme == "https" else 80)
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            pass
+    except OSError as e:
+        return {"ok": False, "latency_ms": int((time.monotonic() - t0) * 1000), "detail": f"{host}:{port} — {e}"}
+    return {"ok": True, "latency_ms": int((time.monotonic() - t0) * 1000), "detail": f"{host}:{port} reachable"}
+
+
+def provider_report(cfg: dict | None = None) -> dict[str, dict]:
+    """
+    Full per-provider view for the control dashboard and `sys1 doctor`.
+
+    Per id: name/description/tier/wire, the three flags (enabled / configured /
+    available — available means enabled AND usable right now), a human reason,
+    the non-secret config view, and the registration meta.
+    """
+    cfg = cfg or load_config()
+    out: dict[str, dict] = {}
+    for pid, provider in REGISTRY.items():
+        try:
+            enabled = pid in enabled_set(cfg)
+        except Exception:
+            enabled = True
+        try:
+            usable = bool(provider.is_available(cfg))
+        except Exception:
+            usable = False
+        out[pid] = {
+            "id": pid,
+            "name": provider.name,
+            "description": provider.description,
+            "tier": provider.tier,
+            "wire": provider.wire,
+            "enabled": enabled,
+            "configured": is_configured(pid, cfg),
+            "available": enabled and usable,
+            "reason": availability_reason(pid, cfg),
+            "config": provider_config_view(pid, cfg),
+            "meta": provider.meta,
+        }
+    return out
+
+
 def resolve_providers(spec: str | list[str]) -> list[str]:
-    """Turn a user-facing provider spec (e.g. 'both', 'all', 'decide+jev') into a list of ids."""
+    """
+    Turn a user-facing provider spec into a list of ids.
+
+    Aliases: "both" (decide+jev, the dev-decisions legacy), "core" (the four
+    built-ins), "optin"/"candidates" (every registered candidate), "all"
+    (everything). Unregistered tokens are dropped.
+    """
     if isinstance(spec, list):
-        return [s.strip() for s in spec if s.strip() in REGISTRY]
+        return [s.strip().lower() for s in spec if s.strip().lower() in REGISTRY]
     s = spec.strip().lower()
-    if s in ("both", "all"):
-        return ["decide", "jev"] if s == "both" else list(REGISTRY.keys())
-    return [p for p in re.split(r"[+,;\s]+", s) if p in REGISTRY] if re.search(r"[+,;\s]", s) else [s]
+    if s == "both":
+        return [p for p in ("decide", "jev") if p in REGISTRY]
+    if s == "all":
+        return list(REGISTRY.keys())
+    if s == _CORE_TOKEN:
+        return [p for p, prov in REGISTRY.items() if prov.tier == "core"]
+    if s in _CANDIDATE_TOKENS:
+        return [p for p, prov in REGISTRY.items() if prov.tier != "core"]
+    if re.search(r"[+,;\s]", s):
+        return [p for p in re.split(r"[+,;\s]+", s) if p in REGISTRY]
+    return [s]
 
 
-def call_provider(provider_id: str, text: str, heads: list[Head], cfg: dict, telemetry: dict | None = None) -> dict[str, Answer]:
+def call_provider(
+    provider_id: str, text: str, heads: list[Head], cfg: dict, telemetry: dict | None = None
+) -> dict[str, Answer]:
     provider = REGISTRY.get(provider_id)
     if provider is None:
         raise KeyError(f"unknown provider {provider_id!r}; known: {sorted(REGISTRY)}")
+    if provider_id not in enabled_set(cfg):
+        raise RuntimeError(
+            f"provider {provider_id!r} is disabled — add it to providers.enabled "
+            f"(e.g. \"core,{provider_id}\") or toggle it in the control dashboard"
+        )
     if not provider.is_available(cfg):
-        raise RuntimeError(f"provider {provider_id!r} not available (missing key or venv)")
+        raise RuntimeError(f"provider {provider_id!r} unavailable: {availability_reason(provider_id, cfg)}")
     tele = telemetry if telemetry is not None else {}
     return provider.classify(text, heads, cfg, tele)
 
 
 def is_available(provider_id: str, cfg: dict) -> bool:
+    """Flag-aware availability: enabled AND the provider's own check passing."""
     provider = REGISTRY.get(provider_id)
-    return bool(provider and provider.is_available(cfg))
+    return bool(provider and provider_id in enabled_set(cfg) and provider.is_available(cfg))
 
 
 def available_providers(cfg: dict) -> list[str]:
-    return [pid for pid, p in REGISTRY.items() if p.is_available(cfg)]
-
-
-def _env_snapshot() -> dict[str, str]:
-    """Tiny helper for debug logs: which API-key env names are populated?"""
-    return {k: "set" for k in ("FASTINO_API_KEY", "TYPESAFE_API_KEY") if os.environ.get(k)}
+    return [pid for pid, p in REGISTRY.items() if pid in enabled_set(cfg) and p.is_available(cfg)]

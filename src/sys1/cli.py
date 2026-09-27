@@ -35,6 +35,11 @@ def build_parser() -> argparse.ArgumentParser:
     t = sub.add_parser("tasks", help="List registered task names.")
     t.set_defaults(func=_cmd_tasks)
 
+    pr = sub.add_parser("providers", help="List every provider with its flags (core/candidate, enabled, configured).")
+    pr.add_argument("--json", "-j", action="store_true", help="emit JSON")
+    pr.add_argument("--all", action="store_true", help="include disabled candidates")
+    pr.set_defaults(func=_cmd_providers)
+
     v = sub.add_parser("version", help="Print version and exit.")
     v.set_defaults(func=lambda _a: print(__version__) or 0)
 
@@ -61,10 +66,34 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     report = health_report()
     if args.json:
         print(json.dumps(report, indent=2))
-    else:
-        for pid, info in sorted(report.items()):
-            tick = "✓" if info["available"] else "✗"
-            print(f"  {tick} {pid}: {info['name']} ({info['reason']})")
+        return 0
+    for pid, info in sorted(report.items()):
+        tick = "✓" if info["available"] else "✗"
+        flag = "" if info["enabled"] else "  (disabled)"
+        print(f"  {tick} {pid}: {info['name']} — {info['reason']}{flag}")
+    return 0
+
+
+def _cmd_providers(args: argparse.Namespace) -> int:
+    report = health_report()
+    if args.json:
+        print(json.dumps(report, indent=2))
+        return 0
+    groups = {"core": [], "candidate": []}
+    for pid, info in report.items():
+        groups.setdefault(info["tier"], groups["candidate"]).append((pid, info))
+    for tier, rows in groups.items():
+        if tier != "core" and not args.all:
+            continue
+        rows.sort()
+        print(f"{tier}:")
+        for pid, info in rows:
+            en = "on " if info["enabled"] else "off"
+            cfg_ = "configured" if info["configured"] else "not configured"
+            state = "available" if info["available"] else info["reason"]
+            print(f"  [{en}] {pid:12} {info['wire']:10} {cfg_:16} → {state}")
+    if not args.all:
+        print("\n(candidate providers hidden — pass --all to list them)")
     return 0
 
 

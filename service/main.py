@@ -22,8 +22,10 @@ Env:
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -34,6 +36,26 @@ from pydantic import BaseModel, Field
 
 import sys1
 from sys1.telemetry import calibration_curve, confidence_histogram
+
+
+def _load_dashboard_module():
+    """
+    Load `service/dashboard.py` by file path so it works both under uvicorn
+    (`service.main:app`, namespace package) and under the test harness, which
+    loads this module standalone with no package context.
+    """
+    path = Path(__file__).resolve().parent / "dashboard.py"
+    spec = importlib.util.spec_from_file_location("sys1_dashboard", path)
+    if spec is None or spec.loader is None:
+        return None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["sys1_dashboard"] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except Exception:
+        sys.modules.pop("sys1_dashboard", None)
+        return None
+    return mod
 
 app = FastAPI(
     title="sys1",
@@ -329,7 +351,17 @@ def root() -> JSONResponse:
             "name": "sys1",
             "version": sys1.__version__,
             "docs": "/docs",
-            "endpoints": ["/v1/classify", "/v1/cascade", "/v1/health", "/v1/tasks", "/v1/calibration", "/v1/feedback"],
+            "dashboard": "/dashboard",
+            "endpoints": [
+                "/v1/classify",
+                "/v1/cascade",
+                "/v1/health",
+                "/v1/tasks",
+                "/v1/calibration",
+                "/v1/feedback",
+                "/v1/providers",
+                "/v1/recent",
+            ],
         }
     )
 
@@ -337,3 +369,10 @@ def root() -> JSONResponse:
 @app.get("/healthz")
 def healthz() -> dict:
     return {"ok": True}
+
+
+# ── control dashboard ─────────────────────────────────────────────────────────
+
+_dashboard = _load_dashboard_module()
+if _dashboard is not None:
+    app.include_router(_dashboard.router)

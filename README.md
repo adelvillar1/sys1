@@ -10,7 +10,7 @@ import sys1
 
 # One call. Pick a task. Get a normalized answer + a verdict.
 result = sys1.classify(
-    provider="decide",          # "decide" | "jev" | "local" | "modernbert" | "both" | "cascade[...]"
+    provider="decide",          # "decide" | "jev" | "local" | "modernbert" | "both" | "all" | an enabled candidate id
     task="change",              # "change" | "pr_gate" | "issue_triage" | ... or your own
     text=staged_diff,
 )
@@ -35,13 +35,13 @@ and into a *decision contract* is the criteria.
 | `classify()` | `api.py` | Top-level: resolve → call providers → interpret → log |
 | `cascade_classify()` | `api.py` | Walk a provider chain; stop at the first that clears |
 | `Head` / `Task` / `Answer` | `types.py` | Dataclasses: stable head ids, provider wire shapes |
-| `Provider` | `providers.py` | Pluggable registry; four built-ins |
+| `Provider` | `providers.py` | Pluggable registry: 4 core + 7 opt-in candidates |
 | `parse_decide` / `_jev` / `_local` / `_modernbert` | `parsers.py` | Wire-shape normalization to the shared Answer dict |
 | `interpret()` | `gating.py` | Confidence floors → pass / escalate / block verdict |
 | `log_record()` | `telemetry.py` | JSONL log; redaction; calibration joins |
 | 8 pre-registered tasks | `tasks.py` | change, commit_audit, deps_risk, docs_drift, api_drift, pr_gate, issue_triage, safety |
 | HTTP service | `service/main.py` | FastAPI wrapper, same API, any language |
-| `sys1` CLI | `cli.py` | `classify`, `doctor`, `tasks`, `version` |
+| `sys1` CLI | `cli.py` | `classify`, `doctor`, `providers`, `tasks`, `version` |
 
 The library is **stdlib-only** at runtime. `urllib` for HTTP providers,
 `subprocess` for the local GLiNER venv. `pip install sys1` adds no hard
@@ -57,6 +57,40 @@ dependencies; FastAPI is opt-in via `pip install 'sys1[service]'`.
 | `jev` | TypeSafe hosted `Jev-1.13.0` (`/v1/systemone`) | Three primitives (choice / noul / score), per-option `criteria` descriptions, decision-quality scores on benchmarks (Decision Index 51.67 vs Decide's 9.98) | Higher latency than Decide. `confidence` is a distribution-shape statistic — do NOT threshold it on the same number as Decide. |
 | `local` | `gliner2` in a uv-managed venv (subprocess) | No network, no cost, runs offline | Needs the venv path. Slower per-call (model load), unless you wrap a persistent server. |
 | `modernbert` | `answerdotai/ModernBERT-base` sentence encoder (eval only, no fine-tuning) | Fast + cheap + a useful calibration comparison | Noisy; lower confidence floor (0.55 default) reflects that. Use for calibration, not for gates. |
+
+### Candidate providers (opt-in)
+
+Beyond the four core providers, seven more are **registered but disabled by
+default**. Each speaks an existing wire, so turning one on is config, not code:
+
+| id | Backend | Wire | To enable |
+|----|---------|------|-----------|
+| `clm` | CLM-8B (Contrastive-LM state-action scorer) | `jev` (`/v1/systemone`) | run `clm-serve`, flip the flag |
+| `openjev` | openjev / JevK5 community reproduction | `jev` | serve behind `/v1/systemone` |
+| `kev` | Kev 0.8B/4B/9B (Apache 2.0) | `openai` | vLLM / Ollama behind `/v1/chat/completions` |
+| `tev1` | Tev1 (Together AI decision model) | `openai` | hosted — set `TOGETHER_API_KEY` |
+| `laya` | Laya (Convai, 421M ModernBERT) | `openai` | serve it (wire provisional) |
+| `decide_1b` | GLiNER2.5-Decide-1B | `gliner` (local venv) | `uv pip install gliner2` in the venv |
+| `decide_multi` | GLiNER2.5-multi-Decide | `gliner` (local venv) | same venv |
+
+Flip them with the `providers.enabled` flag — a comma list of ids or any of
+the tokens `core`, `all` / `*`, `optin` / `candidates`, plus a `disabled`
+list that always wins:
+
+```toml
+# ~/.config/sys1/config.toml
+[providers]
+enabled = "core,clm"          # built-ins + CLM-8B
+# enabled = "all"             # everything registered
+# disabled = "tev1"           # subtract from whatever `enabled` resolved to
+```
+
+Same keys are env-overridable: `SYS1_PROVIDERS__ENABLED="core,kev"`.
+The control dashboard (below) writes the same state to
+`~/.config/sys1/state.json`, which beats TOML/env so toggles take effect
+without restart. `sys1 providers` / `sys1 doctor` show every provider's
+flag, configuration, and reachability; `call_provider` on a disabled id
+raises with the fix-it hint.
 
 ### Confidence semantics (important)
 
@@ -95,8 +129,9 @@ uvicorn service.main:app --host 0.0.0.0 --port 8400
 git clone https://github.com/adelvillar1/sys1.git
 cd sys1
 uv sync --all-extras
-uv run pytest                   # 65 tests
+uv run pytest                   # 126 tests
 uv run sys1 doctor              # provider availability check
+uv run sys1 providers           # registry: core + candidates, flag/config/health
 ```
 
 ---
@@ -184,10 +219,42 @@ Endpoints:
 | `GET`  | `/v1/health` | Per-provider availability snapshot |
 | `GET`  | `/v1/tasks` | List registered task names + head summaries |
 | `GET`  | `/v1/calibration` | Confidence curve + per-provider accuracy (from the JSONL log) |
+| `GET`  | `/dashboard` | Control dashboard (single-page app) |
+| `GET`  | `/v1/providers` | Full registry view: flags, config shape, availability + reasons |
+| `POST` | `/v1/providers/{id}/flag` | Enable/disable a provider — persists `state.json` |
+| `POST` | `/v1/providers/{id}/probe` | TCP/venv reachability probe |
+| `GET`  | `/v1/recent` | Tail of the JSONL event log |
 
 The service reads `SYS1_BEARER_TOKEN` from its env; when set, requests without
 a matching `Authorization: Bearer …` header get `401`. When unset, the service
-runs open — appropriate only behind a private network.
+runs open — appropriate only behind a private network. The `/dashboard` page
+and the read-only `/v1/providers` snapshot stay open even with a token set
+(they expose only non-secret config shape); everything mutating — flags,
+probes, classify, feedback, calibration, recent — requires the bearer.
+
+---
+
+## Control dashboard
+
+`http://<host>:8400/dashboard` is a single-page operator console:
+
+- **Provider cards** for the whole registry — tier/wire chips, a status pill
+  (ready / not-configured / unreachable / disabled), the exact reason, the
+  non-secret config view, and a setup hint on candidates. A toggle enables or
+  disables any provider (writes `state.json`), and a probe button checks the
+  endpoint without a model call.
+- **Live classify console** — pick a task, set the floor, select providers
+  (unavailable ones are struck through but selectable anyway), paste text,
+  run. Verdict, latency, per-head labels with confidence bars, and per-head
+  telemetry (HTTP status, tokens, retries) render inline.
+- **Feedback capture** — type the expected label next to any head and save;
+  it lands as a `feedback` row joined to the classify row by `input_sha256`,
+  which is what feeds the calibration curve.
+- **Recent activity** — the JSONL tail: time, task, providers, verdict,
+  latency, labels, errors.
+
+The bearer token goes in the header input once per browser session (kept in
+`sessionStorage`); the page itself is always served so the JS can prompt.
 
 ---
 
@@ -260,17 +327,18 @@ one — use a strong LLM or static analyzer for that, not sys1.
 sys1/
 ├── src/sys1/
 │   ├── types.py         Head, Answer, Task, Provider, ClassifyResult
-│   ├── providers.py     decide / jev / local / modernbert + registry
+│   ├── providers.py     core + candidate registry, wire factories, flags
 │   ├── parsers.py       provider wire-shape → normalized Answer
 │   ├── tasks.py         8 pre-registered tasks + TOML/JSON loader
-│   ├── config.py        defaults, TOML load, env overrides
+│   ├── config.py        defaults, TOML load, env overrides, state.json
 │   ├── gating.py        interpret() + final_exit_code()
 │   ├── telemetry.py     JSONL log, redaction, histogram, feedback, calibration
 │   ├── api.py           classify(), cascade_classify(), health_report()
-│   └── cli.py           sys1 classify / doctor / tasks / version
-├── tests/               65 tests, recorded fixtures + mocked transports
+│   └── cli.py           sys1 classify / doctor / providers / tasks / version
+├── tests/               126 tests, recorded fixtures + mocked transports
 ├── service/
-│   ├── main.py          FastAPI wrapper (5 endpoints)
+│   ├── main.py          FastAPI wrapper (classify/cascade/health/tasks/calibration)
+│   ├── dashboard.py     control dashboard router + single-page app
 │   ├── pyproject.toml   service-specific deps
 │   └── Dockerfile       container build
 ├── examples/            git-hook, pr-gate, custom-task recipes

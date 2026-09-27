@@ -194,6 +194,15 @@ class Provider:
     `classify(text, heads, cfg, telemetry) -> dict[head_id, Answer]` — the
     provider's response, already normalized to the Answer wire shape above.
     Implementations own retry/backoff and telemetry population.
+
+    Flag fields (see providers.py `enabled_set`):
+      - `tier`: "core" (the four built-ins, on by default) or "candidate"
+        (opt-in models, off until listed in `providers.enabled`).
+      - `wire`: which request shape the provider speaks — "jev", "openai",
+        or "gliner". The dashboard and the wire factories key off this.
+      - `is_configured`: cheap check that the provider's endpoint / venv /
+        API key exists, independent of the enable flag. When None, the
+        report falls back to `is_available`.
     """
 
     id: str
@@ -201,6 +210,10 @@ class Provider:
     classify: ClassifyFn
     is_available: AvailabilityFn
     description: str = ""
+    tier: str = "core"
+    wire: str = "openai"
+    is_configured: AvailabilityFn | None = None
+    meta: dict[str, Any] = field(default_factory=dict)
 
 
 # ── top-level result ──────────────────────────────────────────────────────────

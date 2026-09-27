@@ -71,7 +71,11 @@ def classify(
     elapsed = int((time.monotonic() - t0) * 1000)
 
     if not answers:
-        reason = telemetry.get(resolved_providers[0], {}).get("error", "no-provider-succeeded") if resolved_providers else "no-providers"
+        reason = (
+            telemetry.get(resolved_providers[0], {}).get("error", "no-provider-succeeded")
+            if resolved_providers
+            else _explicit_unavailable(provider, cfg)
+        )
         return ClassifyResult(
             task=resolved_task.id,
             provider=provider if isinstance(provider, str) else ",".join(provider),
@@ -219,6 +223,21 @@ def _resolve_providers(spec: str | list[str], cfg: dict, task: Task) -> list[str
     return [p for p in raw if p in available]
 
 
+def _explicit_unavailable(spec: str | list[str], cfg: dict) -> str:
+    """When nothing resolved, explain an explicitly-named provider's state.
+
+    Fan-out specs ("all", "both", "core") stay generic; a single named provider
+    reports its real availability reason (disabled by flag / missing key / venv
+    absent / no listener) so `--provider clm` says *why* rather than a bare
+    "no-providers".
+    """
+    names = [spec] if isinstance(spec, str) else list(spec)
+    single = names[0].strip().lower() if len(names) == 1 and names[0] else None
+    if single and single in _providers.REGISTRY and single not in ("all", "both", "core", "optin", "candidates"):
+        return f"{single} unavailable: {_providers.availability_reason(single, cfg)}"
+    return "no-providers"
+
+
 def _all_heads(task: Task, providers: list[str]) -> list:
     """Union of every head across the providers we actually called, de-duped by id."""
     seen: dict[str, Any] = {}
@@ -258,15 +277,13 @@ def _log_classify(
 
 
 def health_report(cfg: dict | None = None) -> dict:
-    """Per-provider availability snapshot for the HTTP `/health` and CLI doctor."""
-    cfg = cfg or load_config()
-    out: dict[str, dict] = {}
-    for pid, provider in _providers.REGISTRY.items():
-        try:
-            ok = provider.is_available(cfg)
-            reason = "available" if ok else "unavailable"
-        except Exception as e:
-            ok = False
-            reason = f"check-failed: {e}"
-        out[pid] = {"id": pid, "name": provider.name, "available": ok, "reason": reason}
-    return out
+    """
+    Per-provider snapshot for the HTTP `/health` and CLI doctor.
+
+    Flag-aware: `available` means enabled AND usable right now. The report also
+    carries `enabled` / `configured` / `tier` / `wire` / `config` so the control
+    dashboard and doctor can explain *why* a provider is off, not just that it
+    is. Keys `id` / `name` / `available` / `reason` stay present for consumers
+    (dev-decisions) that read them directly.
+    """
+    return _providers.provider_report(cfg)

@@ -23,12 +23,23 @@ from __future__ import annotations
 
 from .types import Answer, Head, Verdict
 
-# Default confidence floors per provider family. Tune in config.
+# Default confidence floors per provider family. Tune per provider with
+# `{provider}_confidence_floor` in [classify] (honored for every registered
+# provider, candidates included — see _floors_for).
 _DEFAULT_FLOORS = {
+    # core
     "decide": 0.7,
     "local": 0.7,
     "modernbert": 0.55,  # fast but noisy, lower floor
     "jev": 0.7,
+    # candidates — inherit their wire family's semantics
+    "clm": 0.7,          # jev wire
+    "openjev": 0.65,     # community reproduction, slightly less trusted
+    "kev": 0.7,          # openai wire
+    "tev1": 0.7,         # openai wire
+    "laya": 0.6,         # openai wire, unconfirmed calibration
+    "decide_1b": 0.7,    # gliner wire (Decide semantics)
+    "decide_multi": 0.65,  # gliner wire, multilingual boundary variant
 }
 
 
@@ -97,11 +108,15 @@ def _heads_by_id(heads: list[Head] | None) -> dict[str, Head]:
 
 def _floors_for(cfg: dict) -> dict[str, float]:
     """Merge code defaults ← cfg.classify.confidence_floor ← per-provider overrides."""
+    from .providers import REGISTRY
+
     base = dict(_DEFAULT_FLOORS)
     global_floor = cfg["classify"].get("confidence_floor")
     if global_floor is not None:
         base = {k: float(global_floor) for k in base}
-    for prov in _DEFAULT_FLOORS:
+    # per-provider overrides win for every registered provider, not just those
+    # with a default entry above.
+    for prov in list(REGISTRY) + list(_DEFAULT_FLOORS):
         key = f"{prov}_confidence_floor"
         if key in cfg["classify"]:
             base[prov] = float(cfg["classify"][key])

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sys1"
-version = "0.1.0"
+version = "0.2.0"
 description = "Reusable System One decision-model abstraction: Jev, GLiNER2.5-Decide, local GLiNER, ModernBERT — one Python API, one wire shape, normalized results, calibration telemetry."
 readme = "README.md"
 requires-python = ">=3.10"

@@ -46,6 +46,46 @@ DEFAULTS: dict = {
         "request_timeout_seconds": 30,
         "max_retries": 2,
         "retry_backoff_seconds": 5,
+
+        # ── provider flags ──────────────────────────────────────────────────
+        # `enabled` is a comma list of: core | all | optin | explicit ids.
+        #   "core"                    → the four built-ins (default)
+        #   "core,clm"                → built-ins + CLM-8B
+        #   "all" / "optin"           → everything registered
+        # `disabled` always wins over `enabled` (remove one id from a set).
+        # Runtime toggles (the control dashboard) persist to state.json —
+        # see SYS1_STATE_FILE; they rewrite these two keys.
+        "enabled": "core",
+        "disabled": "",
+
+        # ── candidate providers (off until enabled + configured) ────────────
+        # CLM-8B (Stanford/NVIDIA state-action scorer) — wire-compatible with
+        # TypeSafe Jev: point `clm_api_url` at a running `clm-serve`.
+        "clm_api_url": "http://127.0.0.1:8451/v1/systemone",
+        "clm_model": "Contrastive-LM/CLM-v0.1-8B",
+        "clm_api_key_env": "CLM_API_KEY",
+        # openjev / JevK5 — community Jev reproduction, same /v1/systemone shape.
+        "openjev_api_url": "http://127.0.0.1:8452/v1/systemone",
+        "openjev_model": "openjev-k5",
+        "openjev_api_key_env": "OPENJEV_API_KEY",
+        # Kev (Jared Palmer; Apache 2.0; 0.8B/4B/9B) — serve behind any
+        # OpenAI-compatible endpoint (vLLM, Ollama /v1, llama.cpp).
+        "kev_api_url": "http://127.0.0.1:8453/v1/chat/completions",
+        "kev_model": "kev-4b",
+        "kev_api_key_env": "KEV_API_KEY",
+        # Tev1 (Together AI decision model) — hosted OpenAI-compatible.
+        "tev1_api_url": "https://api.together.xyz/v1/chat/completions",
+        "tev1_model": "TogetherTevalabs/tev1",
+        "tev1_api_key_env": "TOGETHER_API_KEY",
+        # Laya (Convai; 421M ModernBERT decision model) — OpenAI-compatible
+        # when served; swap the url for your endpoint.
+        "laya_api_url": "http://127.0.0.1:8454/v1/chat/completions",
+        "laya_model": "convai/laya",
+        "laya_api_key_env": "LAYA_API_KEY",
+        # GLiNER-family variants run through the same local venv as `local`;
+        # only the model name differs (zero network).
+        "decide_1b_model": "fastino/GLiNER2.5-Decide-1B",
+        "decide_multi_model": "fastino/GLiNER2.5-multi-Decide",
     },
     "log": {
         "redact_fields": ("content", "context", "match", "_raw"),
@@ -99,7 +139,52 @@ def load_config(
         path = key[len(ENV_PREFIX) :].lower().split("__")
         _set_nested(cfg, path, _coerce(val))
 
+    # runtime flag state (written by the control dashboard) wins over TOML/env
+    _apply_state_file(cfg)
+
     return cfg
+
+
+def state_file_path() -> Path:
+    """Where runtime provider-flag toggles persist."""
+    env = os.environ.get("SYS1_STATE_FILE")
+    if env:
+        return Path(env).expanduser()
+    return Path.home() / ".config" / "sys1" / "state.json"
+
+
+def _apply_state_file(cfg: dict) -> None:
+    path = state_file_path()
+    if not path.exists():
+        return
+    try:
+        import json
+
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return  # a broken state file never breaks the tool
+    prov = state.get("providers") or {}
+    if "enabled" in prov:
+        cfg["providers"]["enabled"] = ",".join(str(x) for x in prov["enabled"])
+    if "disabled" in prov:
+        cfg["providers"]["disabled"] = ",".join(str(x) for x in prov["disabled"])
+
+
+def write_state_flags(enabled_ids: list[str], disabled_ids: list[str]) -> Path:
+    """Persist runtime provider-flag state (used by the dashboard toggles)."""
+    import json
+
+    path = state_file_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {"providers": {"enabled": sorted(enabled_ids), "disabled": sorted(disabled_ids)}},
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return path
 
 
 def _deep_merge(base: dict, override: dict) -> None:

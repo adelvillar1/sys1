@@ -4,6 +4,52 @@ All notable changes to `sys1` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] — 2026-09-27
+
+Provider flags + control dashboard: candidate System One models wired and
+ready, enable/disable without touching code.
+
+### Added
+- **Provider flags** — `providers.enabled` / `providers.disabled` accept
+  `core`, `all` / `*`, `optin` / `candidates`, or explicit ids (env:
+  `SYS1_PROVIDERS__ENABLED`). `enabled_set()` gates `call_provider`,
+  `is_available`, and the API fan-out; a disabled provider fails with the
+  exact fix-it hint instead of a bare "unavailable".
+- **Seven candidate providers** (registered, off by default, one config
+  entry away from live): `clm` (CLM-8B, Jev wire), `openjev` (JevK5, Jev
+  wire), `kev` (Apache-2.0, OpenAI wire), `tev1` (Together AI, OpenAI
+  wire), `laya` (Convai, OpenAI wire — provisional), and the GLiNER-family
+  `decide_1b` / `decide_multi` (same local venv as `local`).
+- **Wire factories** — `_openai_wire` / `_jev_wire` / `_gliner_wire`
+  generate `classify` + availability from `{id}_api_url`, `{id}_model`,
+  `{id}_api_key_env`, `{id}_requires_key`. Adding a model that speaks an
+  existing wire is config + one `register()` call.
+- **`Provider` metadata** — `tier` (`core`/`candidate`), `wire`,
+  `is_configured`, `meta` (setup hints). Custom providers default to
+  `core`, so they keep working exactly as before.
+- **Reporting API** — `provider_report()` / `availability_reason()` /
+  `provider_config_view()` / `probe()` give the dashboard and `sys1 doctor`
+  per-provider enabled/configured/available + a human reason.
+- **`sys1 providers`** CLI command — core/candidate groups with flag,
+  config, and availability state.
+- **Control dashboard** (`service/dashboard.py`, mounted at `/dashboard`) —
+  provider cards with toggle switches (persist to `~/.config/sys1/state.json`),
+  endpoint probes, a live classify console with provider multi-select and
+  per-head confidence bars, feedback capture per head (joins the calibration
+  log via `input_sha256`), and a recent-JSONL activity table. New endpoints:
+  `GET /v1/providers`, `POST /v1/providers/{id}/flag`,
+  `POST /v1/providers/{id}/probe`, `GET /v1/recent`.
+- **Runtime state file** — `SYS1_STATE_FILE` (default
+  `~/.config/sys1/state.json`) written by dashboard toggles, loaded by
+  `config.load_config()` and winning over TOML/env; a corrupt file is
+  ignored, never fatal.
+- **Candidate gating floors** — per-provider confidence-floor defaults for
+  all seven candidates in `gating._DEFAULT_FLOORS` (Jev-wire 0.65,
+  OpenAI-wire 0.7, Laya 0.6, GLiNER variants 0.65–0.7).
+- **Tests** — flag resolution, disabled-gate errors, state-file
+  round-trip/priority/corruption, candidate reporting, probes, dashboard
+  endpoints, auth boundaries, and the page itself (suite now 126 tests).
+
 ## [0.1.0] — 2026-09-27
 
 Initial public release.
