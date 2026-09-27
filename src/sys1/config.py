@@ -1,0 +1,144 @@
+"""
+Config: defaults, TOML loading, env-var overrides.
+
+Config dict mirrors dev-decisions' shape 1:1 (`providers`, `classify`, `scan`,
+`hooks`, `gate`) so existing config files and the JSONL log keys stay compatible.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Any
+
+DEFAULT_LOG_ROOT = Path.home() / ".local" / "share" / "sys1" / "logs"
+DEFAULT_CONFIG_FILES = [
+    Path.home() / ".config" / "sys1" / "config.toml",
+    Path.home() / ".config" / "dev-decisions" / "config.toml",
+]
+
+DEFAULTS: dict = {
+    "scan": {
+        "max_diff_chars": 12_000,
+    },
+    "classify": {
+        "provider": "decide",        # decide | jev | local | modernbert | both | all
+        "block_on_classification": False,
+        "confidence_floor": 0.7,
+        "escalate_on_null": True,
+        "log_dir": str(DEFAULT_LOG_ROOT),
+    },
+    "providers": {
+        # Fastino hosted Decide (OpenAI-compatible chat-completions).
+        "decide_api_url": "https://api.fastino.ai/v1/chat/completions",
+        "decide_model": "fastino/GLiNER-2.5-Decide",
+        "decide_api_key_env": "FASTINO_API_KEY",
+        # TypeSafe Jev (/v1/systemone, the SDK shape).
+        "jev_api_url": "https://api.typesafe.ai/v1/systemone",
+        "jev_model": "jev-1.13.0",
+        "jev_api_key_env": "TYPESAFE_API_KEY",
+        # Local GLiNER2 — runs inside a uv-managed venv via subprocess.
+        "local_venv": "/private/tmp/gliner-decide",
+        "local_model": "fastino/GLiNER2.5-Decide",
+        # ModernBERT-base as a sentence encoder (no fine-tuning; eval only).
+        "modernbert_model": "answerdotai/ModernBERT-base",
+        # HTTP transport.
+        "request_timeout_seconds": 30,
+        "max_retries": 2,
+        "retry_backoff_seconds": 5,
+    },
+    "log": {
+        "redact_fields": ("content", "context", "match", "_raw"),
+    },
+}
+
+ENV_PREFIX = "SYS1_"
+
+
+def load_config(
+    extra_paths: list[str | Path] | None = None,
+    *,
+    repo_root: Path | None = None,
+) -> dict:
+    """Merge DEFAULTS ← discovered TOML files ← repo-local TOML ← env vars.
+
+    Discovery order for TOML files (later wins):
+      1. `~/.config/sys1/config.toml` (if exists)
+      2. `~/.config/dev-decisions/config.toml` (if exists, for compat)
+      3. Each path in `extra_paths` (caller-provided, must exist)
+      4. `<repo_root>/.sys1.toml` and `<repo_root>/.dev-decisions.toml`
+    """
+    cfg: dict[str, Any] = {section: dict(values) for section, values in DEFAULTS.items()}
+
+    files_to_load: list[Path] = [p for p in DEFAULT_CONFIG_FILES if p.exists()]
+    if extra_paths:
+        for p in extra_paths:
+            path = Path(p).expanduser()
+            if path.exists():
+                files_to_load.append(path)
+    if repo_root:
+        for name in (".sys1.toml", ".dev-decisions.toml"):
+            candidate = repo_root / name
+            if candidate.exists():
+                files_to_load.append(candidate)
+
+    for path in files_to_load:
+        try:
+            import tomllib  # 3.11+; the dev-decisions path is 3.10+ so guard.
+
+            with open(path, "rb") as f:
+                user = tomllib.load(f)
+            _deep_merge(cfg, user)
+        except Exception:
+            pass  # a broken config never breaks the tool
+
+    # env overrides: SYS1_PROVIDERS__JEV_MODEL=... etc
+    for key, val in os.environ.items():
+        if not key.startswith(ENV_PREFIX):
+            continue
+        path = key[len(ENV_PREFIX) :].lower().split("__")
+        _set_nested(cfg, path, _coerce(val))
+
+    return cfg
+
+
+def _deep_merge(base: dict, override: dict) -> None:
+    for k, v in override.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            _deep_merge(base[k], v)
+        else:
+            base[k] = v
+
+
+def _set_nested(d: dict, path: list[str], val: Any) -> None:
+    cur = d
+    for p in path[:-1]:
+        cur = cur.setdefault(p, {})
+    cur[path[-1]] = val
+
+
+def _coerce(val: str):
+    lowered = val.lower()
+    if lowered in ("true", "yes", "1"):
+        return True
+    if lowered in ("false", "no", "0"):
+        return False
+    try:
+        return int(val)
+    except ValueError:
+        pass
+    try:
+        return float(val)
+    except ValueError:
+        pass
+    return val
+
+
+def api_key_for(provider_id: str, cfg: dict) -> str | None:
+    """Resolve the env-var name from the provider's `*_api_key_env` config."""
+    env_name = cfg["providers"].get(f"{provider_id}_api_key_env")
+    if env_name:
+        return os.environ.get(env_name)
+    # legacy compat with dev-decisions: hardcoded names
+    legacy = {"decide": "FASTINO_API_KEY", "jev": "TYPESAFE_API_KEY"}
+    return os.environ.get(legacy.get(provider_id, ""))

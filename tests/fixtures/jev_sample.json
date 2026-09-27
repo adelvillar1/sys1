@@ -1,0 +1,44 @@
+{
+  "answers": {
+    "diff_type": {
+      "type": "choice",
+      "choice": "fix",
+      "confidence": 0.78,
+      "probabilities": {
+        "feat": 0.18,
+        "fix": 0.62,
+        "refactor": 0.12,
+        "docs": 0.04,
+        "test": 0.02,
+        "chore": 0.01,
+        "deps": 0.005,
+        "style": 0.005
+      }
+    },
+    "risk_tier": {
+      "type": "choice",
+      "choice": "medium",
+      "confidence": 0.65,
+      "probabilities": {
+        "low": 0.25,
+        "medium": 0.55,
+        "high": 0.2
+      }
+    },
+    "breaking_change": {
+      "type": "noul",
+      "noul": false,
+      "confidence": 0.92
+    },
+    "personal_data": {
+      "type": "noul",
+      "noul": false,
+      "confidence": 0.88
+    }
+  },
+  "model": "jev-1.13.0",
+  "usage": {
+    "input_tokens": 512,
+    "output_tokens": 64
+  }
+}

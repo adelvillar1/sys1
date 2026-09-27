@@ -1,0 +1,21 @@
+{
+  "id": "chatcmpl-decide-sample",
+  "model": "fastino/GLiNER-2.5-Decide",
+  "object": "chat.completion",
+  "created": 1700000000,
+  "choices": [
+    {
+      "index": 0,
+      "finish_reason": "stop",
+      "message": {
+        "role": "assistant",
+        "content": "{\"What type of change is this diff? Choose e\": {\"label\": \"feat\", \"confidence\": 0.91}, \"What is the risk level of this change? lo\": {\"label\": \"low\", \"confidence\": 0.82}}"
+      }
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 280,
+    "completion_tokens": 22,
+    "total_tokens": 302
+  }
+}

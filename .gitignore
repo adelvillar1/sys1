@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# Virtual envs (any layout)
+.venv/
+venv/
+env/
+
+# uv
+uv.lock
+!service/uv.lock
+
+# Pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# sys1 runtime artifacts
+sys1-*.log
+*.log

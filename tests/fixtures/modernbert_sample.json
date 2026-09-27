@@ -1,0 +1,29 @@
+{
+  "diff_type": {
+    "label": "feat",
+    "confidence": 0.6412,
+    "all_scores": {
+      "feat": 0.6412,
+      "fix": 0.5123,
+      "refactor": 0.4891,
+      "docs": 0.4201,
+      "test": 0.3987,
+      "chore": 0.3801,
+      "deps": 0.3711,
+      "style": 0.3690
+    },
+    "top2_gap": 0.1289,
+    "embedding_norm": 1.0
+  },
+  "risk_tier": {
+    "label": "low",
+    "confidence": 0.5501,
+    "all_scores": {
+      "low": 0.5501,
+      "medium": 0.4201,
+      "high": 0.3912
+    },
+    "top2_gap": 0.13,
+    "embedding_norm": 1.0
+  }
+}

@@ -1,0 +1,26 @@
+[project]
+name = "sys1-service"
+version = "0.1.0"
+description = "HTTP wrapper around the sys1 decision-model library. Run as a shared service for any language."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+dependencies = [
+  "sys1",
+  "fastapi>=0.110",
+  "uvicorn>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.27",
+  "pytest>=7",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+# When developing inside the sys1 repo, resolve the local package directly.
+package = false

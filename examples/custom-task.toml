@@ -1,0 +1,47 @@
+# A custom task file for `sys1.load_tasks_file(...)`.
+# Run from the repo root:
+#
+#   PYTHONPATH=src python3 -c "
+#   import sys1; sys1.load_tasks_file('examples/custom-task.toml')
+#   r = sys1.classify('decide', 'security_review', open('staged.diff').read())
+#   print(r.verdict, r.summary)"
+
+[[tasks]]
+id = "security_review"
+description = "Flag diffs that touch auth, PII, or crypto."
+heads = [
+  { id = "touches_auth",
+    kind = "noul",
+    task = "Does this diff change auth, sessions, tokens, or credential handling?" },
+  { id = "touches_pii",
+    kind = "noul",
+    task = "Does this diff read, write, or transmit personally-identifiable data (email, phone, SSN, address, or health/financial fields)?" },
+  { id = "touches_crypto",
+    kind = "noul",
+    task = "Does this diff add or modify cryptographic primitives, key material, or password hashing?" },
+  { id = "severity",
+    kind = "choice",
+    task = "If any of the above flags fire, how severe is the exposure?",
+    labels = ["none", "low", "medium", "high"] },
+]
+
+# Provider-specific overrides: Jev gets richer criteria descriptions.
+[tasks.provider_heads.jev]
+severity = { id = "severity", kind = "choice", task = "If any of the above flags fire, how severe is the exposure?",
+             labels = ["none", "low", "medium", "high"],
+             descriptions = {none = "Nothing flagged.", low = "Flagged, no exposure.", medium = "Internal exposure.", high = "External / user-facing exposure."} }
+
+
+[[tasks]]
+id = "doc_quality"
+description = "Classify README / docs changes for quality and audience fit."
+heads = [
+  { id = "audience",
+    kind = "choice",
+    task = "Who is this doc aimed at?",
+    labels = ["end-user", "developer", "operator", "internal"] },
+  { id = "completeness",
+    kind = "choice",
+    task = "How complete is the doc?",
+    labels = ["stub", "partial", "complete"] },
+]

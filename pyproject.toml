@@ -1,0 +1,85 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sys1"
+version = "0.1.0"
+description = "Reusable System One decision-model abstraction: Jev, GLiNER2.5-Decide, local GLiNER, ModernBERT — one Python API, one wire shape, normalized results, calibration telemetry."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Alejandro Del Villar" }]
+keywords = [
+  "jev",
+  "gliner",
+  "decide",
+  "modernbert",
+  "classification",
+  "routing",
+  "system-one",
+  "decision-models",
+  "calibration",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Libraries",
+  "Typing :: Typed",
+]
+
+# Stdlib-only. Optional HTTP providers and subprocess local-model paths use
+# urllib + subprocess, both in the stdlib. No hard runtime deps.
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7",
+  "pytest-cov>=4",
+  "ruff>=0.6",
+]
+# `pip install 'sys1[service]'` pulls in FastAPI for the HTTP wrapper.
+service = [
+  "fastapi>=0.110",
+  "uvicorn>=0.27",
+]
+# `pip install 'sys1[local]'` pulls in the GLiNER2 + torch stack the local
+# provider shells out to. Optional because the heavyweight wheels live in a
+# uv-managed venv that the default `local_venv` config points at.
+local = []
+
+[project.urls]
+Homepage = "https://github.com/adelvillar1/sys1"
+Repository = "https://github.com/adelvillar1/sys1"
+Issues = "https://github.com/adelvillar1/sys1/issues"
+
+[project.scripts]
+# `sys1 serve` is the only entry point we ship from the library; the service
+# app itself lives under service/ and installs its own `sys1-serve` console
+# script via sys1[service].
+sys1 = "sys1.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sys1"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "README.md", "CHANGELOG.md", "LICENSE"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
+ignore = ["E501"]  # long task texts in the task registry stay readable
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
