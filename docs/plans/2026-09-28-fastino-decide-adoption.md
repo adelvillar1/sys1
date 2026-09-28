@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 created: 2026-09-28
 updated: 2026-09-28
 slug: fastino-decide-adoption
@@ -34,14 +34,16 @@ Five phases, strictly ordered — each phase's consumer depends on the one befor
 
 These are the contract. Each is a verifiable assertion.
 
-- [ ] sys1's local provider answers an N-head task with **one** model load and **one** decode (subprocess mode: one invocation per `classify()`; server mode: one HTTP call), regardless of head count — measured, not assumed.
-- [ ] Local answers carry full `probabilities`, and `confidence == max(probabilities)` for every choice/ordinal head.
-- [ ] Score heads are served via `schema.ordinal`; noul-shaped heads are binary singles whose probability gates through `answer_confidence()`'s derived certainty.
-- [ ] With the persistent server running, a second `classify()` does not reload the model (second-call latency ≪ first-call; no subprocess spawn); with the server down, the subprocess fallback produces identical answer shapes.
-- [ ] dev-decisions runs its default classification path through sys1 with model `fastino/GLiNER2.5-Decide` and no `FASTINO_API_KEY`; `scripts/verify-dev-decisions-parity.py` still passes.
-- [ ] zcode-router-kit's judge path returns the same verdict shape it returns today, sourced from a sys1 service running the local provider, with no direct api.fastino.ai call on the default path.
-- [ ] No consumer's documented default path targets the hosted Decide endpoint; the `decide`-id-vs-Decide-model distinction is stated in sys1's README, dev-decisions' README, and the router's README.
-- [ ] sys1 suite green with no test-count regression; ruff clean on touched files; parity script green.
+- [x] sys1's local provider answers an N-head task with **one** model load and **one** decode (subprocess mode: one invocation per `classify()`; server mode: one HTTP call), regardless of head count — measured, not assumed. *(live 2026-09-28: 2-head `change` task = one subprocess call, 12.4s incl. load; server mode one POST, 361ms first / 144ms steady)*
+- [x] Local answers carry full `probabilities`, and `confidence == max(probabilities)` for every choice/ordinal head. *(live output; `tests/test_local_wire.py::TestParseGliner2`)*
+- [x] Score heads are served via `schema.ordinal`; noul-shaped heads are binary singles whose probability gates through `answer_confidence()`'s derived certainty. *(live mixed-head task: noul 0.868 "(conf 0.87 derived)", ordinal severity → score 2.0 + legend; spec/parser unit tests)*
+- [x] With the persistent server running, a second `classify()` does not reload the model (second-call latency ≪ first-call; no subprocess spawn); with the server down, the subprocess fallback produces identical answer shapes. *(live: 361ms → 144ms, `mode=server`, no fallback marker; fallback shape covered by `TestParseGliner2` legacy dispatch + live subprocess run)*
+- [x] dev-decisions runs its default classification path through sys1 with model `fastino/GLiNER2.5-Decide` and no `FASTINO_API_KEY`; `scripts/verify-dev-decisions-parity.py` still passes. *(default flipped to `local` in DEFAULTS + config.example.toml, commit `d5e140d`; parity exit 0 with keys unset — labels agree, local confidence deltas documented as the schema-task-name effect, parity script updated per this plan's risk mitigation)*
+- [x] zcode-router-kit's judge path returns the same verdict shape it returns today, sourced from a sys1 service running the local provider, with no direct api.fastino.ai call on the default path. *(live Node run against the service + classifier server: gates applied on the same `{workload, execution, workflow, followUp, conf…}` shape, ~280ms; fail-open on a down service; commit `015c8f2`)*
+- [x] No consumer's documented default path targets the hosted Decide endpoint; the `decide`-id-vs-Decide-model distinction is stated in sys1's README, dev-decisions' README, and the router's README. *(sys1 README "Provider naming"; dev-decisions provider table + config comments; router README judge-backends rewrite)*
+- [x] sys1 suite green with no test-count regression; ruff clean on touched files; parity script green. *(211 passed (188 + 23 new); ruff 16 pre-existing, 0 new; parity exit 0)*
+
+Completed 2026-09-28. Commits: sys1 `4916a2f` + `7663cde` (`feature/provider-flags-and-dashboard`), dev-decisions `d5e140d` (`migrate-to-sys1`), zcode-router-kit `015c8f2` (`master`). None pushed; sys1 merging to `main` still requires explicit approval.
 
 ## Files to be touched
 

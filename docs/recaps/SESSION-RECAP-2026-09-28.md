@@ -1,6 +1,61 @@
 # Session Recap — 2026-09-28
 
-> Plan: [`docs/plans/2026-09-28-noul-gating-and-recipe-pack.md`](../plans/2026-09-28-noul-gating-and-recipe-pack.md) → completed this session
+> Plans: [`docs/plans/2026-09-28-noul-gating-and-recipe-pack.md`](../plans/2026-09-28-noul-gating-and-recipe-pack.md) → completed; [`docs/plans/2026-09-28-fastino-decide-adoption.md`](../plans/2026-09-28-fastino-decide-adoption.md) → completed
+
+## Second half: fastino Decide adoption (sys1 as the one integration)
+
+The vendor's own playground (fastino/gliner25-decide-playground) settled how
+GLiNER2.5-Decide is meant to be used: `gliner2.classification.Classifier` +
+one `ClassificationSchema` for all heads (`single`/`ordinal`),
+`ClassificationConfig(decoder="independent")`, full `probabilities` per
+answer. Verified in our venv: 9.8s model load, 361ms one-decode 3-head
+classify on CPU. Per the user's directive, sys1 is THE fastino integration
+and dev-decisions + zcode-router consume it; hosted api.fastino.ai is off
+every default path.
+
+Shipped (sys1 `4916a2f` + `7663cde`):
+
+- **Prescribed local wire** — `_LOCAL_INLINE` migrated off the legacy
+  `GLiNER2.classify_text` per-head loop; `classification_schema_spec()`
+  (pure) feeds both the inline script and the new server; `parse_gliner2`
+  emits `{label, confidence=max(probs), probabilities}` for choice, the
+  docs-accurate noul shape (no confidence; gating derives `max(p, 1−p)`),
+  and `score = score_min + ordinal_level_index` with a legend.
+- **Classifier server** (`service/classifier_server.py`, stdlib, runs in the
+  venv) — load-once, one inference at a time, `GET /ready` + `POST /infer`
+  with the playground contract. Opt in via `providers.local_server_url`
+  (per-model `{pid}_server_url`); automatic subprocess fallback; an
+  answering server counts as available in `sys1 doctor`. Measured: 12.4s
+  per subprocess classify → 361ms first / 144ms steady-state via the server.
+- **Inline task specs** — `sys1.task_from_spec()` + `POST /v1/classify`
+  accepts `task_spec`, so consumers with per-install heads (the router's
+  workflow names) classify without registering a task.
+- **Naming collision documented** — `decide` id = hosted wire; the Decide
+  model is what `local` runs. Hosted `decide_model` string corrected to
+  `fastino/GLiNER2.5-Decide`.
+- `examples/routing-judge.toml` — the router's four questions as a sys1 task.
+
+Consumers: dev-decisions `d5e140d` (default provider flips to `local`, its
+degraded inline path migrated to the same prescribed surface, README/config
+updated) and zcode-router-kit `015c8f2` (`fastino.mjs` is a sys1-service
+client — inline `task_spec` from the install's own workflow names, same
+exports/return contract, gates stay caller-side, multi-v1 → Decide, no
+direct hosted call on the live path).
+
+**Finding worth keeping:** the classification schema's task NAME is part of
+the model input — naming the same schema by head id vs task text moves
+confidences (0.3949 vs 0.3884) while labels stay stable. That is why the
+parity script now gates on labels/shapes/noul-consistency and reports local
+confidence deltas as informational: sys1 names tasks by head id, dev-
+decisions' degraded path by task text. Any future task-name change is a
+behavior change.
+
+Verification: sys1 suite 188 → 211 (new `tests/test_local_wire.py`, all
+stubbed — no model in tests); live end-to-end runs in both serving modes;
+parity script exit 0 with API keys unset; Node judge path exercised against
+the live service. Ruff: 16 pre-existing, 0 new.
+
+## First half: noul gating, per-head floors, recipe pack
 
 ## What shipped
 
