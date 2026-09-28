@@ -56,6 +56,14 @@ Head interpretation:
 - `providers_used` records every provider consulted.
 - Winner's answers drive the verdict via `interpret()` (same floors, so walk and verdict can't disagree).
 
+### Consistency classification
+
+- `consistency_classify(provider, task, text, *, n=5, low=0.30, high=0.70)` re-asks the same task `n` independent times (official self-consistency pattern).
+- Per head the signal is the raw noul probability P(true), or the winner's max probability for choice/score heads; Decide-shaped boolean nouls (hosted decide) estimate P(true) as the boolean's confidence when true, `1 − confidence` when false. Draws with no gateable number (declined) count as samples but score as `None` ("counted but not scored").
+- Returns per-head `samples` / `mean` / `stdev` and a `band`: below `low` → `"no"`, above `high` → `"yes"`, inclusive between → `"uncertain"` (route to review); `None` when no draw was usable.
+- The band bounds ship as **illustrative** starting points — fit them from the JSONL calibration stream; published thresholds do not transfer across workloads.
+- Each draw is an ordinary classify() call: with `log=True` the log gains n regular records (same shape), so feedback joins work per draw.
+
 <add-when-implemented>
 - Per-task provider chain defaults
 - Cascade reconciliation when providers disagree (majority vs. high-confidence tiebreak)

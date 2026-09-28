@@ -123,6 +123,43 @@ class TestHttpPostJson:
                 )
         assert "503" in str(exc.value)
 
+    def test_429_retries_then_succeeds(self):
+        """Jev documents 429 rate-limiting (1,200 req/min) — retryable."""
+        ok = {"answers": {}}
+        err = urllib.error.HTTPError("u", 429, "rate", {}, io.BytesIO(b"rate limited"))
+        responses = [err, _make_resp(200, json.dumps(ok).encode())]
+        tele: dict = {}
+        with patch("urllib.request.urlopen", side_effect=responses), patch("time.sleep"):
+            out = http_post_json(
+                "https://api.test/v1",
+                {},
+                api_key="k",
+                timeout=5,
+                max_retries=1,
+                backoff=0.01,
+                telemetry=tele,
+            )
+        assert out == ok
+        assert tele["retries"] == 1
+        assert tele["structured_ok"] is True
+
+    def test_429_exhausted_raises(self):
+        err = urllib.error.HTTPError("u", 429, "rate", {}, io.BytesIO(b"rate limited"))
+        tele: dict = {}
+        with patch("urllib.request.urlopen", side_effect=err), patch("time.sleep"), pytest.raises(RuntimeError) as exc:
+            http_post_json(
+                "https://api.test/v1",
+                {},
+                api_key="k",
+                timeout=5,
+                max_retries=1,
+                backoff=0.01,
+                telemetry=tele,
+            )
+        assert "429" in str(exc.value)
+        assert tele["http_status"] == 429
+        assert tele["structured_ok"] is False
+
     def test_network_error_retries(self):
         with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("nope")), patch("time.sleep"):
             with pytest.raises(RuntimeError):

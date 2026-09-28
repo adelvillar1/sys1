@@ -47,8 +47,9 @@ def http_post_json(
     """
     POST JSON body to url. Returns parsed JSON response.
 
-    Retries on HTTP 5xx, network errors, and (Fastino-style) "warming" errors
-    with exponential backoff. 4xx raises immediately.
+    Retries on HTTP 5xx, 429 rate-limit (Jev documents 1,200 req/min),
+    network errors, and (Fastino-style) "warming" errors with exponential
+    backoff. Other 4xx raises immediately.
     """
     data = body.encode("utf-8") if isinstance(body, str) else json.dumps(body).encode("utf-8")
     headers = {
@@ -94,7 +95,7 @@ def http_post_json(
             with contextlib.suppress(Exception):
                 body_text = e.read().decode("utf-8", errors="replace")[:300]
             last_err = f"HTTP {e.code}: {body_text}"
-            if 500 <= e.code < 600 and attempt < max_retries:
+            if (500 <= e.code < 600 or e.code == 429) and attempt < max_retries:
                 _set_telemetry(telemetry, e.code, t0, attempt, structured_ok=False)
                 _sleep_backoff(backoff, attempt)
                 continue
@@ -293,20 +294,28 @@ def _gliner_wire(pid: str, model_key: str = "local_model"):
 def classification_schema_spec(heads: list[Head]) -> dict[str, dict]:
     """
     Pure task spec for the prescribed classification API:
-    `{head_id: {"kind": "single"|"ordinal", "labels": [...], "score_min"?: int}}`.
+    `{head_id: {"kind": "single"|"ordinal", "labels": [...], "instruction": str,
+    "score_min"?: int}}`.
 
     No gliner2 import — the inline script and the classifier server both
     translate this spec into a `ClassificationSchema`, and tests can assert
     its shape without loading a model. Choice and noul heads are single-label
     questions over their labels; score heads are ordinal scales (ordered
-    levels, index 0 = lowest, mapped back to `score_min + index`).
+    levels, index 0 = lowest, mapped back to `score_min + index`). The head's
+    task text rides along as `instruction` — without it the model only sees
+    the label set, and query-dependent tasks are answer-blind.
     """
     spec: dict[str, dict] = {}
     for h in heads:
         if h.kind == "score":
-            spec[h.id] = {"kind": "ordinal", "labels": _ordinal_levels(h), "score_min": h.score_min}
+            spec[h.id] = {
+                "kind": "ordinal",
+                "labels": _ordinal_levels(h),
+                "score_min": h.score_min,
+                "instruction": h.task,
+            }
         else:
-            spec[h.id] = {"kind": "single", "labels": list(h.labels)}
+            spec[h.id] = {"kind": "single", "labels": list(h.labels), "instruction": h.task}
     return spec
 
 
@@ -465,12 +474,14 @@ tasks = json.loads(sys.argv[3])
 
 # Fastino-prescribed usage (gliner25-decide-playground/model.py): one
 # ClassificationSchema holding every head as a named task, one decode.
+# instruction carries the head's question text — without it the model
+# only sees the label set.
 schema = ClassificationSchema()
 for name, spec in tasks.items():
     if spec["kind"] == "ordinal":
-        schema.ordinal(name, spec["labels"])
+        schema.ordinal(name, spec["labels"], instruction=spec.get("instruction"))
     else:
-        schema.single(name, spec["labels"])
+        schema.single(name, spec["labels"], instruction=spec.get("instruction"))
 
 clf = Classifier.from_pretrained(model_name, map_location="cpu")
 

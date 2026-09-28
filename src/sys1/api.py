@@ -11,6 +11,7 @@ only if it's low-confidence, ask the next one.
 from __future__ import annotations
 
 import hashlib
+import statistics
 import time
 from typing import Any
 
@@ -226,6 +227,121 @@ def cascade_classify(
     if log:
         _log_classify(result, cfg, text, extra_log_fields={"cascade": True, "chain": chain, "winner": winner})
     return result
+
+
+def consistency_classify(
+    provider: str,
+    task: str | Task,
+    text: str,
+    *,
+    n: int = 5,
+    cfg: dict | None = None,
+    log: bool = True,
+    low: float = 0.30,
+    high: float = 0.70,
+) -> dict:
+    """
+    Self-consistency: re-ask the same task `n` times and band the per-head
+    signal — the official /cookbooks/consistency_noul_cookbook pattern.
+
+    Per head the signal is the raw noul probability P(true), or the winner's
+    max probability for choice/score heads (read from `probabilities`, falling
+    back to the answer's explicit confidence). Draw shapes:
+
+    - probabilistic noul (Jev, local): the noul value itself
+    - Decide-shaped boolean noul (hosted decide): P(true) estimated as the
+      boolean's confidence when true, `1 - confidence` when false — hosted
+      decide's confidence is the winning label's max probability
+    - choice/score: winner's max probability, else the explicit confidence
+
+    Draws with no gateable number (declined, bool noul without confidence)
+    count as samples but score as None — the cookbook's "counted but not
+    scored".
+
+    `band` maps the mean over usable samples: below `low` -> "no", above
+    `high` -> "yes", inclusive between -> "uncertain" (route to review).
+    The bounds ship as ILLUSTRATIVE starting points from the cookbook — fit
+    your own from the JSONL calibration stream (`record_feedback` +
+    `calibration_curve`); published thresholds do not transfer across
+    workloads.
+
+    Each draw is an ordinary classify() call, so with log=True the JSONL log
+    gains n regular records (same shape, joined by input_sha256) — no new
+    record contract. Cost scales linearly with `n`: output tokens are free,
+    state tokens are not.
+    """
+    if n < 1:
+        raise ValueError(f"n must be >= 1, got {n}")
+    cfg = cfg or load_config()
+    resolved_task = _resolve_task(task)
+    head_list = heads_for(resolved_task, provider)
+
+    samples: dict[str, list[float | None]] = {h.id: [] for h in head_list}
+    for _ in range(n):
+        result = classify(provider, resolved_task, text, cfg=cfg, log=log)
+        answers = result.answers.get(provider, {})
+        for h in head_list:
+            samples[h.id].append(_consistency_signal(answers.get(h.id)))
+
+    heads_out: dict[str, dict] = {}
+    for h in head_list:
+        draws = samples[h.id]
+        usable = [s for s in draws if s is not None]
+        mean = statistics.mean(usable) if usable else None
+        stdev = statistics.stdev(usable) if len(usable) >= 2 else None
+        if mean is None:
+            band = None
+        elif mean < low:
+            band = "no"
+        elif mean > high:
+            band = "yes"
+        else:
+            band = "uncertain"
+        heads_out[h.id] = {
+            "kind": h.kind,
+            "samples": draws,
+            "mean": mean,
+            "stdev": stdev,
+            "band": band,
+        }
+
+    return {
+        "task": resolved_task.id,
+        "provider": provider,
+        "n": n,
+        "bounds": {"low": low, "high": high},
+        "heads": heads_out,
+    }
+
+
+def _consistency_signal(entry: Answer | None) -> float | None:
+    """The per-draw number consistency bands: raw P(true) for noul, the
+    winner's max probability for choice/score, else the explicit confidence.
+    None when the draw carries no gateable number."""
+    if not isinstance(entry, dict) or entry.get("_declined"):
+        return None
+    if entry.get("type") == "noul" or "noul" in entry:
+        noul = entry.get("noul")
+        if isinstance(noul, bool):
+            # Decide-shaped boolean noul: confidence is the winning label's
+            # max probability, so P(true) is conf when true, 1 - conf when false
+            conf = entry.get("confidence")
+            if isinstance(conf, (int, float)) and not isinstance(conf, bool):
+                return float(conf) if noul else 1.0 - float(conf)
+            return None
+        if isinstance(noul, (int, float)):
+            return float(noul)
+        return None
+    probs = entry.get("probabilities")
+    if isinstance(probs, dict) and probs:
+        vals = [
+            float(v)
+            for v in probs.values()
+            if isinstance(v, (int, float)) and not isinstance(v, bool)
+        ]
+        if vals:
+            return max(vals)
+    return answer_confidence(entry)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────

@@ -55,6 +55,19 @@ stubbed — no model in tests); live end-to-end runs in both serving modes;
 parity script exit 0 with API keys unset; Node judge path exercised against
 the live service. Ruff: 16 pre-existing, 0 new.
 
+## Third pass: Jev cookbook adoption (skills + self-consistency + semantic find)
+
+Plan [`docs/plans/2026-09-28-jev-cookbook-adoption.md`](../plans/2026-09-28-jev-cookbook-adoption.md) → completed. The vendor's cookbook layer beyond the recipes: official jagged edges, confidence semantics, self-consistency, semantic find, function calling, entity alignment, skill suggestion, plus dbreunig/building-with-jev-skill craft.
+
+- **typesafe-jev skill** gained three sections (jagged edges with workarounds written as task-authoring rules incl. the no-structural-invariants warning; task-design craft; the symptom→fix diagnosis table) and an extended cookbook index. dbreunig's skill absorbed, not installed.
+- **`sys1.consistency_classify(provider, task, text, *, n=5, low=0.30, high=0.70)`** — self-consistency: n draws, per-head samples/mean/stdev, band routing (0.30–0.70 inclusive → uncertain; illustrative bounds). Signals: raw noul P(true); Decide-shaped boolean nouls estimate P(true) as conf / 1−conf; choice/score on winner max-prob. Per-draw ordinary JSONL records.
+- **`examples/semantic-find.py`** — ranked Choice over line IDs + query-embedded existence Noul, one call; handles probabilistic and Decide-shaped boolean nouls; documents that hosted decide declines large flat choices (ranks engage on jev).
+- **429 retryable** in `http_post_json` (Jev: 1,200 req/min), telemetry unchanged.
+- **Docs**: TECHNICAL §5 jagged-edge task-authoring rules (score levels weakly calibrated as numbers; derived noul certainty is a routing convention, not a model identity); FUNCTIONAL §2 consistency subsection; README/CHANGELOG.
+- **Provider policy (user, 2026-09-28)**: hosted Fastino + hosted Jev are the only ACTIVE providers; local GLiNER supported by design, not encouraged, nothing critical relies on it; future hosted APIs explored before inclusion. Consumer corrections: dev-decisions default → decide (`98cf8d1`), router judge → decide (`f99fbd7`).
+- **Live verification (hosted)**: semantic-find answerable query — decide exists true@0.52 → answered; jev exists 0.98 with the cancellation clause ranked 1.00. Unanswerable query — decide false@0.82, jev 0.01 → absent. consistency n=3 via decide: samples 0.9998 ×3 → band yes. The pre-fix query-blind noul returned 0.61 for both queries — the query must ride in the existence noul's instructions.
+- Suite 211 → 233; ruff 16 pre-existing, 0 new.
+
 ## First half: noul gating, per-head floors, recipe pack
 
 ## What shipped

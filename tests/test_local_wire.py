@@ -41,8 +41,15 @@ class TestSchemaSpec:
     def test_choice_head_is_single(self):
         head = make_choice("Which type?", ["feat", "fix"], id="diff_type")
         assert classification_schema_spec([head]) == {
-            "diff_type": {"kind": "single", "labels": ["feat", "fix"]}
+            "diff_type": {"kind": "single", "labels": ["feat", "fix"], "instruction": "Which type?"}
         }
+
+    def test_instruction_rides_in_the_spec(self):
+        """Without instruction the model only sees the label set — query-
+        dependent tasks (semantic find) were answer-blind before this."""
+        head = make_choice('Contains the answer to: "refund window"?', ["L001", "L002"], id="where")
+        spec = classification_schema_spec([head])
+        assert spec["where"]["instruction"] == 'Contains the answer to: "refund window"?'
 
     def test_noul_head_is_binary_single(self):
         head = make_noul("Is this breaking?", id="breaking_change")
@@ -56,6 +63,7 @@ class TestSchemaSpec:
         assert spec["severity"]["kind"] == "ordinal"
         assert spec["severity"]["labels"] == ["1", "2", "3"]
         assert spec["severity"]["score_min"] == 1
+        assert spec["severity"]["instruction"] == "Severity?"
 
     def test_score_head_uses_descriptions_as_levels(self):
         head = make_score(
@@ -203,14 +211,17 @@ class TestClassifierServer:
             def __init__(self):
                 self.calls = []
 
-            def single(self, name, labels):
-                self.calls.append(("single", name, labels))
+            def single(self, name, labels, instruction=None):
+                self.calls.append(("single", name, labels, instruction))
 
-            def ordinal(self, name, labels):
-                self.calls.append(("ordinal", name, labels))
+            def ordinal(self, name, labels, instruction=None):
+                self.calls.append(("ordinal", name, labels, instruction))
 
-        schema = cs.build_schema(FakeSchema(), {"a": {"kind": "single", "labels": ["x"]}, "b": {"kind": "ordinal", "labels": ["1"]}})
-        assert schema.calls == [("single", "a", ["x"]), ("ordinal", "b", ["1"])]
+        schema = cs.build_schema(
+            FakeSchema(),
+            {"a": {"kind": "single", "labels": ["x"], "instruction": "q?"}, "b": {"kind": "ordinal", "labels": ["1"]}},
+        )
+        assert schema.calls == [("single", "a", ["x"], "q?"), ("ordinal", "b", ["1"], None)]
 
     def test_extract_skips_absent_tasks(self):
         cs = _classifier_server()

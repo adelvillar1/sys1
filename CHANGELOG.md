@@ -81,6 +81,28 @@ ready, enable/disable without touching code.
   endpoints, auth boundaries, and the page itself (suite now 126 tests).
 
 ### Added (2026-09-28 — same branch, after the 0.2.0 cut)
+- **Self-consistency helper** — `sys1.consistency_classify(provider, task,
+  text, *, n=5, low=0.30, high=0.70)` implements the official
+  consistency-cookbook pattern: n independent draws, per-head
+  `samples`/`mean`/`stdev`, and an uncertainty band routing the inclusive
+  middle to review. Noul heads band on the raw probability; choice/score on
+  the winner's max probability; ungatable draws count but don't score. Each
+  draw logs an ordinary classify record. Bounds are illustrative — fit them
+  from the calibration stream.
+- **`examples/semantic-find.py`** — the semantic_find cookbook: rank lines
+  with a Choice over line-IDs plus an existence Noul in one request
+  (provider-swappable, 255-line cap documented).
+- **429 is retryable** — `http_post_json` backs off on Jev's documented
+  rate-limit status (with 5xx and warming); telemetry records every attempt.
+- **Jagged-edge wire rules documented** — TECHNICAL-DOCUMENTATION §5 now
+  carries the vendor's jev-1.13 limitations as task-authoring rules (no
+  counting/arithmetic/dates; score levels weakly calibrated as numbers;
+  no structural invariants — derived noul certainty is a routing
+  convention, not a model identity).
+- **`typesafe-jev` agent skill extended** — jagged-edges table, task-design
+  craft (instructions objects, contrastive criteria, standalone score
+  levels), and a symptom→fix diagnosis table, absorbed from the vendor
+  pages and `dbreunig/building-with-jev-skill`.
 - **Fastino-prescribed local wire** — the `gliner` family (`local`,
   `decide_1b`, `decide_multi`) now uses `gliner2.classification.Classifier`
   + `ClassificationSchema` exactly as the vendor's own playground does:

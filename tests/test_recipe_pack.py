@@ -47,6 +47,10 @@ STUB_ANSWERS: dict[str, dict] = {
     # floored loader task
     "risky": {"type": "choice", "label": "yes", "confidence": 0.8},
     "safe": {"type": "choice", "label": "yes", "confidence": 0.8},
+    # semantic_find: line ranking + existence noul (3-line doc)
+    "where": {"type": "choice", "label": "L002", "confidence": 0.8,
+              "probabilities": {"L001": 0.1, "L002": 0.8, "L003": 0.1}},
+    "exists": {"type": "noul", "noul": 0.9},
 }
 
 STUB_ID = "recipe_stub"
@@ -263,6 +267,72 @@ class TestTaxonomyWalkRecipe:
             assert stop is not None and "weak edge" in stop
         finally:
             EDGE_CONF = original
+
+
+class TestSemanticFindRecipe:
+    def test_builds_line_id_task(self):
+        semantic_find = _load_example("semantic-find")
+        task = semantic_find.build_task(3, "termination clause")
+        assert task.head_ids() == ["where", "exists"]
+        assert task.find("where").labels == ["L001", "L002", "L003"]
+        # the query rides in BOTH instructions — a query-blind existence
+        # noul is noise (verified live 2026-09-28)
+        assert "termination clause" in task.find("where").task
+        assert "termination clause" in task.find("exists").task
+
+    def test_ranks_lines_and_flags_answered(self, cfg, stub):
+        semantic_find = _load_example("semantic-find")
+        out = semantic_find.find(
+            "how do refunds work",
+            ["unrelated page", "our refund policy: 30 days", "another page"],
+            STUB_ID,
+            cfg,
+        )
+        assert out["ranked"][0] == (2, 0.8)  # L002, 0.8
+        assert out["verdict"] == "answered"  # exists 0.9 >= FOUND 0.7
+
+    def test_weak_existence_flags_absent_despite_ranking(self, cfg, stub):
+        """The cookbook's key insight: ranking without existence is not an answer."""
+        original = STUB_ANSWERS["exists"]
+        STUB_ANSWERS["exists"] = {"type": "noul", "noul": 0.2}
+        try:
+            semantic_find = _load_example("semantic-find")
+            out = semantic_find.find("q", ["a", "b", "c"], STUB_ID, cfg)
+            assert out["verdict"] == "absent"  # 0.2 <= ABSENT 0.35
+            assert out["ranked"][0] == (2, 0.8)  # ranking still returned; caller decides
+        finally:
+            STUB_ANSWERS["exists"] = original
+
+    def test_between_band_is_partial(self, cfg, stub):
+        original = STUB_ANSWERS["exists"]
+        STUB_ANSWERS["exists"] = {"type": "noul", "noul": 0.5}
+        try:
+            semantic_find = _load_example("semantic-find")
+            out = semantic_find.find("q", ["a", "b", "c"], STUB_ID, cfg)
+            assert out["verdict"] == "partial"
+        finally:
+            STUB_ANSWERS["exists"] = original
+
+    def test_decide_shaped_boolean_noul_is_handled(self, cfg, stub):
+        """Hosted decide returns nouls as bool + confidence, not 0-1."""
+        original = STUB_ANSWERS["exists"]
+        try:
+            STUB_ANSWERS["exists"] = {"type": "noul", "noul": False, "confidence": 0.61}
+            semantic_find = _load_example("semantic-find")
+            out = semantic_find.find("q", ["a", "b", "c"], STUB_ID, cfg)
+            assert out["verdict"] == "absent"
+            assert out["exists"] == 0.61  # the boolean's certainty
+            STUB_ANSWERS["exists"] = {"type": "noul", "noul": True, "confidence": 0.8}
+            out = semantic_find.find("q", ["a", "b", "c"], STUB_ID, cfg)
+            assert out["verdict"] == "answered"
+            assert out["exists"] == 0.8
+        finally:
+            STUB_ANSWERS["exists"] = original
+
+    def test_over_255_lines_exits_with_hint(self, cfg):
+        semantic_find = _load_example("semantic-find")
+        with pytest.raises(SystemExit, match="two-stage narrowing"):
+            semantic_find.find("q", ["line"] * 256, STUB_ID, cfg)
 
 
 class TestLoaderPerHeadFloor:

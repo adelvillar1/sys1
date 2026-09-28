@@ -84,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--diff-file", type=Path, default=None, help="read diff from this file (else: live staged diff)")
     args = p.parse_args(argv)
 
-    import sys1  # noqa: E402
+    import sys1
 
     try:
         dd = _bootstrap_dev_decisions(args.repo)

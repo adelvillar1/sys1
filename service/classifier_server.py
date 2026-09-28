@@ -56,10 +56,11 @@ def load_engine(model_name: str) -> None:
 def build_schema(schema, tasks: dict):
     """Translate the wire's task spec into a ClassificationSchema (fake-able)."""
     for name, spec in tasks.items():
+        instruction = spec.get("instruction")
         if spec.get("kind") == "ordinal":
-            schema.ordinal(name, spec["labels"])
+            schema.ordinal(name, spec["labels"], instruction=instruction)
         else:
-            schema.single(name, spec["labels"])
+            schema.single(name, spec["labels"], instruction=instruction)
     return schema
 
 

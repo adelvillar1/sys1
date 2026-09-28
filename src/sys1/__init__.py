@@ -26,7 +26,7 @@ this same `classify()`. `pip install 'sys1[service]'` pulls the extras.
 
 from __future__ import annotations
 
-from .api import cascade_classify, classify, health_report
+from .api import cascade_classify, classify, consistency_classify, health_report
 from .config import DEFAULTS, api_key_for, load_config, state_file_path, write_state_flags
 from .gating import answer_confidence, effective_floor, final_exit_code, interpret
 from .providers import (
@@ -81,6 +81,7 @@ __all__ = [
     # core
     "classify",
     "cascade_classify",
+    "consistency_classify",
     "health_report",
     # config
     "load_config",

@@ -179,7 +179,7 @@ uvicorn service.main:app --host 0.0.0.0 --port 8400
 git clone https://github.com/adelvillar1/sys1.git
 cd sys1
 uv sync --all-extras
-uv run pytest                   # 211 tests
+uv run pytest                   # 233 tests
 uv run sys1 doctor              # provider availability check
 uv run sys1 providers           # registry: core + candidates, flag/config/health
 ```
@@ -201,6 +201,10 @@ print(both.telemetry["decide"]["latency_ms"], both.telemetry["jev"]["latency_ms"
 
 # Cascade: cheap first, escalate if low confidence
 cascade = sys1.cascade_classify(["decide", "jev"], "issue_triage", issue_body)
+
+# Self-consistency: re-ask n times, band the signal, route the middle to review
+report = sys1.consistency_classify("local", "safety", text, n=5)
+print(report["heads"]["removes_auth"]["band"])   # "no" | "uncertain" | "yes"
 ```
 
 ### Your own task (TOML)
@@ -258,6 +262,7 @@ result = sys1.classify("mine", "change", text)
 | `lead-scoring.py` | 4 composite score heads | Blending ordered per-signal ratings with explicit weights |
 | `rerank-passages.py` | N score heads in one call | Ranking passages (or any candidates); returns nothing when the best is weak |
 | `taxonomy-walk.py` | one choice head per taxonomy level | Hierarchical classification on a budget: one call per level, cumulative confidence, weak edges bail via `head.floor` |
+| `semantic-find.py` | ranked Choice over line IDs + existence Noul, one call | Line-level semantic search that knows when the document does *not* answer; provider-swappable |
 
 Every recipe runs against a live provider (`sys1 doctor` first) and is
 smoke-tested offline in `tests/test_recipe_pack.py` with a stub provider —
@@ -407,7 +412,7 @@ sys1/
 │   ├── telemetry.py     JSONL log, redaction, histogram, feedback, calibration
 │   ├── api.py           classify(), cascade_classify(), health_report()
 │   └── cli.py           sys1 classify / doctor / providers / tasks / version
-├── tests/               211 tests, recorded fixtures + mocked transports
+├── tests/               233 tests, recorded fixtures + mocked transports
 ├── service/
 │   ├── main.py          FastAPI wrapper (classify/cascade/health/tasks/calibration)
 │   ├── dashboard.py     control dashboard router + single-page app

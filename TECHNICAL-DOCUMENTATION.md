@@ -67,6 +67,8 @@ Detailed architecture: [`docs/architecture/overview.md`](docs/architecture/overv
 
 Primary entry point: `sys1.classify(provider, task, text, cfg=None, *, log=True) → ClassifyResult`
 
+Reliability wrappers: `sys1.cascade_classify(...)` (provider chain, stop at the first floor-clearing provider) and `sys1.consistency_classify(..., n=5)` (self-consistency: n independent draws, per-head samples/mean/stdev, uncertainty band 0.30–0.70 → review — illustrative bounds, fit from the calibration stream).
+
 Key types:
 - `Head` / `Task` / `Provider` / `ClassifyResult` — `src/sys1/types.py`
 - `make_choice()` / `make_noul()` / `make_score()` — head factories
@@ -122,6 +124,16 @@ Wire rules that have bitten before:
 ### Noul gating
 
 A Jev noul answer has no `confidence` field, so `answer_confidence(entry)` derives the floor-comparable certainty: `max(p, 1 − p)` — a confident "no" (p=0.05) clears a 0.7 floor the same as a confident "yes" (p=0.95), and a coin flip (p=0.55) escalates. An explicit `confidence` on the answer still wins, so Decide-shaped nouls (which arrive as `{label, confidence}`) keep the old behavior exactly. Bool nouls have no gateable number: nothing to derive, and `label is None` (declined) still escalates. Details: [`docs/features/gating-and-recipes.md`](docs/features/gating-and-recipes.md).
+
+### Jev jagged edges (task-authoring rules)
+
+TypeSafe documents what jev-1.13 does badly (`docs.typesafe.ai/model-jaggedness/jev-1.13`). Task authors and reviewers apply these as rules:
+
+- **Never ask Jev to count, do arithmetic, or compare dates** — one noul per item and sum in code; extract date parts as Choices over enumerated options and assemble in code.
+- **Score levels are weakly calibrated as numbers** — threshold, rank, or round a score; never reconstruct a magnitude from it. (`confidence` describes distribution shape, not correctness.)
+- **Filter state in code; send only needed fields** — large irrelevant state is a documented distractor, and text in state is *not treated as hostile* (no built-in injection defense; that is what the guardrail battery is for).
+- **No structural invariants** — P(x) vs 1−P(not x) is not guaranteed, and a noul can disagree with a choice on the same fact. Our derived noul certainty is a routing convention, not a model-verified identity; never port thresholds across primitives or providers.
+- **Self-consistency** (`sys1.consistency_classify`) is the vendor's reliability pattern for borderline calls: repeat draws, band the per-head signal, route the middle band to review.
 
 ### Official TypeSafe references
 
