@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import api_key_for, load_config
-from .parsers import parse_decide, parse_jev, parse_local, parse_modernbert
+from .parsers import parse_decide, parse_gliner2, parse_jev, parse_modernbert
 from .types import Answer, Head, Provider
 
 # ── HTTP core (stdlib-only) ──────────────────────────────────────────────────
@@ -219,48 +219,117 @@ def _jev_wire(pid: str):
 
 
 def _gliner_wire(pid: str, model_key: str = "local_model"):
-    """Classify fn for GLiNER2-family models run through the local uv venv."""
+    """
+    Classify fn for GLiNER2-family models, using the fastino-prescribed API
+    (gliner25-decide-playground/model.py): one `ClassificationSchema` holding
+    every head as a named task (`single` for choice/noul, `ordinal` for score),
+    one `Classifier.classify(..., decoder="independent")` decode, and the full
+    `probabilities` distribution per task in every answer.
+
+    Two serving modes: the load-once classifier server (opt in via the
+    `local_server_url` config key, per-provider `{pid}_server_url` override)
+    and the subprocess fallback. Both produce identical answer shapes; with
+    the server configured but unreachable the wire falls back automatically.
+    """
 
     def _fn(text: str, heads: list[Head], cfg: dict, telemetry: dict) -> dict[str, Answer]:
-        venv_python = _local_venv_python(cfg)
-        if not venv_python.exists():
-            raise RuntimeError(f"Local GLiNER venv not found at {venv_python}")
-
-        tasks = {h.id: h.to_local_head() for h in heads}
-        max_chars = cfg["scan"]["max_diff_chars"]
         model = cfg["providers"].get(model_key) or cfg["providers"]["local_model"]
+        spec = classification_schema_spec(heads)
+        max_chars = cfg["scan"]["max_diff_chars"]
+        payload = {"text": text[:max_chars], "tasks": spec, "model": model}
+        timeout = cfg["providers"]["request_timeout_seconds"]
 
         t0 = time.monotonic()
-        proc = subprocess.run(
-            [str(venv_python), "-c", _LOCAL_INLINE, model, text[:max_chars], json.dumps(tasks)],
-            capture_output=True,
-            text=True,
-            timeout=cfg["providers"]["request_timeout_seconds"],
-        )
-        latency_ms = int((time.monotonic() - t0) * 1000)
-        telemetry["latency_ms"] = latency_ms
+        server_url = (
+            cfg["providers"].get(f"{pid}_server_url") or cfg["providers"].get("local_server_url") or ""
+        ).strip()
+        parsed: dict | None = None
+        if server_url:
+            try:
+                resp = _post_local_server(server_url, payload, timeout)
+                if resp.get("meta", {}).get("model") == model:
+                    parsed = resp.get("tasks") or {}
+                    telemetry["mode"] = "server"
+                else:
+                    telemetry["server_fallback"] = f"model mismatch: {resp.get('meta', {}).get('model')!r}"
+            except Exception as e:
+                telemetry["server_fallback"] = str(e)[:120]
+
+        structured = True
+        if parsed is None:
+            venv_python = _local_venv_python(cfg)
+            if not venv_python.exists():
+                raise RuntimeError(f"Local GLiNER venv not found at {venv_python}")
+            proc = subprocess.run(
+                [str(venv_python), "-c", _LOCAL_INLINE, model, text[:max_chars], json.dumps(spec)],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            if proc.returncode != 0:
+                telemetry["error_kind"] = "subprocess"
+                telemetry["stderr"] = (proc.stderr or "")[:300]
+                telemetry["structured_ok"] = False
+                raise RuntimeError(f"Local GLiNER failed: {proc.stderr[:300]}")
+            try:
+                parsed = json.loads(proc.stdout)
+            except json.JSONDecodeError:
+                parsed = {"_raw": proc.stdout[:200]}
+                telemetry["error_kind"] = "json"
+                structured = False
+            telemetry["mode"] = "subprocess"
+        telemetry["latency_ms"] = int((time.monotonic() - t0) * 1000)
         telemetry["retries"] = 0
-        if proc.returncode != 0:
-            telemetry["error_kind"] = "subprocess"
-            telemetry["stderr"] = (proc.stderr or "")[:300]
-            telemetry["structured_ok"] = False
-            raise RuntimeError(f"Local GLiNER failed: {proc.stderr[:300]}")
 
-        try:
-            parsed = json.loads(proc.stdout)
-            structured = True
-        except json.JSONDecodeError:
-            parsed = {"_raw": proc.stdout[:200]}
-            telemetry["error_kind"] = "json"
-            structured = False
-
-        out = parse_local(parsed, heads)
+        out = parse_gliner2(parsed, heads, spec)
         null_count = sum(1 for a in out.values() if a.get("label") is None and a.get("noul") is None)
         telemetry["null_label_count"] = null_count
         telemetry["structured_ok"] = structured
         return out
 
     return _fn
+
+
+def classification_schema_spec(heads: list[Head]) -> dict[str, dict]:
+    """
+    Pure task spec for the prescribed classification API:
+    `{head_id: {"kind": "single"|"ordinal", "labels": [...], "score_min"?: int}}`.
+
+    No gliner2 import — the inline script and the classifier server both
+    translate this spec into a `ClassificationSchema`, and tests can assert
+    its shape without loading a model. Choice and noul heads are single-label
+    questions over their labels; score heads are ordinal scales (ordered
+    levels, index 0 = lowest, mapped back to `score_min + index`).
+    """
+    spec: dict[str, dict] = {}
+    for h in heads:
+        if h.kind == "score":
+            spec[h.id] = {"kind": "ordinal", "labels": _ordinal_levels(h), "score_min": h.score_min}
+        else:
+            spec[h.id] = {"kind": "single", "labels": list(h.labels)}
+    return spec
+
+
+def _ordinal_levels(head: Head) -> list[str]:
+    """Ordered level strings for an ordinal schema (index 0 = lowest)."""
+    labels = list(head.labels)
+    if all(label.isdigit() for label in labels):
+        labels = sorted(labels, key=int)
+    if head.descriptions:
+        return [head.descriptions.get(label, label) for label in labels]
+    return labels
+
+
+def _post_local_server(url: str, payload: dict, timeout: float) -> dict:
+    """POST {text, tasks, model} to the classifier server's /infer endpoint."""
+    req = urllib.request.Request(
+        url.rstrip("/") + "/infer",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
 
 
 # ── Availability primitives (flag-independent; the gate lives in the registry) ─
@@ -344,6 +413,24 @@ def _venv_available(_cfg: dict) -> bool:
         return False
 
 
+def _local_available(pid: str):
+    """
+    Availability for gliner-family providers: a configured classifier server
+    answering on `{pid}_server_url` / `local_server_url`, or the venv present
+    (subprocess fallback). `sys1 doctor` surfaces which path will be used.
+    """
+
+    def _fn(cfg: dict) -> bool:
+        url = (
+            cfg["providers"].get(f"{pid}_server_url") or cfg["providers"].get("local_server_url") or ""
+        ).strip()
+        if url and _tcp_open(url, timeout=0.35):
+            return True
+        return _venv_available(cfg)
+
+    return _fn
+
+
 def _endpoint_configured(pid: str):
     """Static config check for the dashboard: endpoint present, key satisfied (no TCP)."""
 
@@ -359,38 +446,55 @@ def _endpoint_configured(pid: str):
 # ── Local GLiNER2 provider (subprocess into uv venv) ─────────────────────────
 
 _LOCAL_INLINE = """
-import json, sys, io, contextlib
-from gliner2 import GLiNER2
+import json, sys, io
 
-# Suppress model load banner so we get clean stdout
+# Suppress model-load banner so we get clean stdout
 old_stdout = sys.stdout
 sys.stdout = io.StringIO()
+
+from gliner2.classification import (
+    ClassificationConfig,
+    ClassificationSchema,
+    Classifier,
+    InfeasibleError,
+)
 
 model_name = sys.argv[1]
 text = sys.argv[2]
 tasks = json.loads(sys.argv[3])
 
-model = GLiNER2.from_pretrained(model_name)
+# Fastino-prescribed usage (gliner25-decide-playground/model.py): one
+# ClassificationSchema holding every head as a named task, one decode.
+schema = ClassificationSchema()
+for name, spec in tasks.items():
+    if spec["kind"] == "ordinal":
+        schema.ordinal(name, spec["labels"])
+    else:
+        schema.single(name, spec["labels"])
 
-results = {}
-for head_id, task in tasks.items():
-    r = model.classify_text(
-        text,
-        tasks={"label": task["labels"]},
-        include_confidence=True,
+clf = Classifier.from_pretrained(model_name, map_location="cpu")
+
+out = {}
+try:
+    result = clf.classify(
+        text, schema, config=ClassificationConfig(decoder="independent", on_infeasible="relax")
     )
-    entry = {}
-    if isinstance(r, dict):
-        inner = r.get("label") or r
-        if isinstance(inner, dict):
-            entry["label"] = inner.get("label")
-            entry["confidence"] = inner.get("confidence")
-        else:
-            entry["label"] = str(inner)
-    results[head_id] = entry
+    for name in tasks:
+        try:
+            value = result.value(name)
+            probs = result.probabilities(name)
+        except Exception:
+            continue  # task absent from the result -> declined downstream
+        labels = list(value) if isinstance(value, (list, tuple)) else [value]
+        out[name] = {
+            "labels": [str(v) for v in labels],
+            "probabilities": {str(k): float(v) for k, v in probs.items()},
+        }
+except InfeasibleError:
+    out = {}  # every head declines -> the gate escalates
 
 sys.stdout = old_stdout
-print(json.dumps(results))
+print(json.dumps(out))
 """
 
 
@@ -552,9 +656,12 @@ register(
         id="local",
         name="GLiNER2.5-Decide (local venv)",
         classify=_gliner_wire("local", "local_model"),
-        is_available=_venv_available,
-        is_configured=_venv_available,
-        description="Subprocess into a uv-managed venv running `gliner2`. No network.",
+        is_available=_local_available("local"),
+        is_configured=_local_available("local"),
+        description=(
+            "Fastino GLiNER2.5-Decide via the prescribed gliner2.classification API — "
+            "load-once classifier server (`local_server_url`) or venv subprocess. No network."
+        ),
         tier="core",
         wire="gliner",
     )
@@ -654,8 +761,8 @@ register(
         id="decide_1b",
         name="GLiNER2.5-Decide-1B (local venv)",
         classify=_gliner_wire("decide_1b", "decide_1b_model"),
-        is_available=_venv_available,
-        is_configured=_venv_available,
+        is_available=_local_available("decide_1b"),
+        is_configured=_local_available("decide_1b"),
         description="1.19B Ettin-encoder variant of the local Decide model; same venv, bigger head.",
         tier="candidate",
         wire="gliner",
@@ -667,8 +774,8 @@ register(
         id="decide_multi",
         name="GLiNER2.5-multi-Decide (local venv)",
         classify=_gliner_wire("decide_multi", "decide_multi_model"),
-        is_available=_venv_available,
-        is_configured=_venv_available,
+        is_available=_local_available("decide_multi"),
+        is_configured=_local_available("decide_multi"),
         description="287M multilingual boundary variant of the local Decide model.",
         tier="candidate",
         wire="gliner",

@@ -501,6 +501,28 @@ def detect_task_from_text(text: str, default: str = "change") -> Task | None:
 # ── external task file loading (TOML or JSON) ────────────────────────────────
 
 
+def task_from_spec(spec: dict) -> Task:
+    """
+    Build a Task from a raw spec dict (the `[[tasks]]` shape in TOML/JSON task
+    files). Pure — no file IO, no registration. `load_tasks_file` uses this
+    for every task in a file; the HTTP service uses it for inline `task_spec`
+    requests so callers (e.g. the zcode-router judge) can send dynamic heads.
+    """
+    head_objs = [_head_from_spec(spec_dict) for spec_dict in spec.get("heads", [])]
+    provider_heads = {
+        prov: [_head_from_spec(h) for h in heads] for prov, heads in (spec.get("provider_heads") or {}).items()
+    }
+    return Task(
+        id=spec["id"],
+        heads=head_objs,
+        description=spec.get("description", ""),
+        providers=spec.get("providers"),
+        confidence_floor=spec.get("confidence_floor"),
+        metadata=spec.get("metadata", {}),
+        provider_heads=provider_heads,
+    )
+
+
 def load_tasks_file(path: str | Path) -> list[Task]:
     """Parse a TOML or JSON task file and register each task. Returns the parsed list."""
     p = Path(path).expanduser()
@@ -515,19 +537,7 @@ def load_tasks_file(path: str | Path) -> list[Task]:
             data = json.load(f)
     tasks: list[Task] = []
     for spec in data.get("tasks", []):
-        head_objs = [_head_from_spec(spec_dict) for spec_dict in spec.get("heads", [])]
-        provider_heads = {
-            prov: [_head_from_spec(h) for h in heads] for prov, heads in (spec.get("provider_heads") or {}).items()
-        }
-        t = Task(
-            id=spec["id"],
-            heads=head_objs,
-            description=spec.get("description", ""),
-            providers=spec.get("providers"),
-            confidence_floor=spec.get("confidence_floor"),
-            metadata=spec.get("metadata", {}),
-            provider_heads=provider_heads,
-        )
+        t = task_from_spec(spec)
         register_task(t)
         tasks.append(t)
     return tasks

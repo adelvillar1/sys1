@@ -1,0 +1,23 @@
+# Routing judge — the zcode-router-kit's four routing questions as a sys1
+# task, served by the local fastino GLiNER2.5-Decide provider via the
+# prescribed classification API (one decode for all four heads).
+#
+# The router's own confidence gates (workload/execution 0.6, workflow 0.4)
+# and the followUp != workflow rule stay CALLER-SIDE in router/fastino.mjs —
+# sys1's verdict is all-heads-or-escalate, while the router treats its four
+# questions independently. This file is the model half only.
+#
+# workload and workflow labels are install-specific: edit them to match the
+# workloads/workflows in your zcode-router config, or skip this file and POST
+# an inline `task_spec` to the sys1 service's /v1/classify (same shape) with
+# the labels your instance actually uses.
+
+[[tasks]]
+id = "routing_judge"
+description = "Route a user turn: workload, execution mode, workflow, follow-up."
+heads = [
+  { id = "workload", kind = "choice", task = "Which workload does this user turn belong to?", labels = ["chat", "code_review", "debugging", "writing", "research"] },
+  { id = "execution", kind = "choice", task = "How should this turn execute?", labels = ["single", "mixture", "swarm"] },
+  { id = "workflow", kind = "choice", task = "Which named workflow fits this turn, if any? Answer none when no workflow applies.", labels = ["none", "pr-review", "incident-triage", "doc-drift"] },
+  { id = "followUp", kind = "choice", task = "Which workflow should the NEXT turn run, if any? Answer none when nothing should follow up.", labels = ["none", "pr-review", "incident-triage", "doc-drift"] },
+]

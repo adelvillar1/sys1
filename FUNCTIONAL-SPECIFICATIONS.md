@@ -88,9 +88,10 @@ A head floor scalar applies in the **serving provider's own** confidence semanti
 
 ## 4. Provider Management
 
-- Four core providers (`decide`, `jev`, `local`, `modernbert`) are enabled by default.
+- Four core providers (`decide`, `jev`, `local`, `modernbert`) are enabled by default. **`decide` means the hosted Fastino wire; the Decide *model* is what `local` runs** — hosted is not on any consumer's default path.
 - Seven candidate providers (`clm`, `openjev`, `kev`, `tev1`, `laya`, `decide_1b`, `decide_multi`) are opt-in: add to `providers.enabled` and configure their endpoint.
-- `sys1 doctor` prints availability reasons per provider (key missing, venv absent, no listener).
+- The `gliner` wire (`local`, `decide_1b`, `decide_multi`) uses the fastino-prescribed classification API with two serving modes: the load-once classifier server (`providers.local_server_url`, per-provider `{pid}_server_url`; run one server per model) or the venv subprocess fallback. Answer shapes are identical; telemetry records `mode` and any `server_fallback` reason.
+- `sys1 doctor` prints availability reasons per provider (key missing, venv absent, no listener) — a configured classifier server that answers counts as available.
 - `sys1 providers --all` prints the full registry with flag state.
 - Control dashboard (`/dashboard`) toggles flags and probes endpoints; state persists to `~/.config/sys1/state.json`.
 

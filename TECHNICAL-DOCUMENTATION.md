@@ -45,7 +45,7 @@ Reusable Python library that normalizes multiple decision-model providers (Jev, 
 | Local models | GLiNER2 / torch / transformers in a uv-managed venv (subprocess) |
 | Build | Hatchling |
 | Lint | ruff (E/F/I/N/UP/B/SIM/RUF) |
-| Tests | pytest ≥ 7 (188 tests) |
+| Tests | pytest ≥ 7 (211 tests) |
 
 For the full module map, see [`docs/architecture/overview.md`](docs/architecture/overview.md).
 
@@ -84,7 +84,20 @@ Providers are registered via `sys1.register(Provider(...))` into a global `REGIS
 |------|-----------|---------------|
 | `openai` | decide, tev1, kev, laya | `/v1/chat/completions` with `classifications` schema |
 | `jev` | jev, clm, openjev | `/v1/systemone` with `{state, questions}` |
-| `gliner` | local, decide_1b, decide_multi | subprocess into uv venv |
+| `gliner` | local, decide_1b, decide_multi | fastino-prescribed `gliner2.classification` API — classifier server or subprocess |
+
+Provider id note: **`decide` means the hosted wire** (api.fastino.ai); the Decide *model* is what the `local` provider runs. Hosted is off every consumer's default path — see `docs/plans/2026-09-28-fastino-decide-adoption.md`.
+
+### Local fastino wire (the prescribed classification API)
+
+The `gliner` wire follows the vendor's own playground (`fastino/gliner25-decide-playground`, `model.py`): one `ClassificationSchema` holding every head as a named task (`single` for choice/noul, `ordinal` for score scales), one `Classifier.classify(text, schema, config=ClassificationConfig(decoder="independent"))` decode, and the full `probabilities` distribution per task in every answer (`confidence` = max). Spec construction is pure (`providers.classification_schema_spec`), so the schema shape is testable without loading a model.
+
+Two serving modes, identical answer shapes:
+
+- **Classifier server** (recommended): `local_server_url` config key (per-provider `{pid}_server_url` override; one server per model). `service/classifier_server.py` runs inside the venv — load-once, one inference at a time, `GET /ready`, `POST /infer` with the playground's `{text, tasks} → {tasks: {name: {labels, probabilities}}}` contract. Measured 2026-09-28: 12.4s per subprocess classify → 361ms first / 144ms steady-state via the server.
+- **Subprocess fallback**: `_LOCAL_INLINE` runs the same prescribed API in a one-shot venv process. Used automatically when the server is unconfigured or unreachable (`telemetry.mode` records which served; `server_fallback` carries the reason).
+
+Noul answers from the local wire are docs-accurate (`{"type": "noul", "noul": p_yes}` — no confidence field); score answers map the selected ordinal level back to `score_min + index` and carry a `legend` when the head has level descriptions. `on_infeasible="relax"` keeps constrained decoding best-effort; a surfaced `InfeasibleError` declines every head so the gate escalates.
 
 Provider flags: `enabled` (tokens: `core`/`all`/`optin`/explicit ids) minus `disabled`. Persisted to `~/.config/sys1/state.json` by the dashboard.
 
@@ -162,7 +175,7 @@ Feedback joins via `input_sha256` (16-hex prefix). `calibration_curve()` produce
 Optional FastAPI service at `service/main.py`. Mount the dashboard with `app.include_router(dashboard.router)`.
 
 Endpoints:
-- `POST /v1/classify` — single classify
+- `POST /v1/classify` — single classify (accepts `task` for a registered name or `task_spec` for an inline `[[tasks]]`-shaped definition — built via `sys1.task_from_spec`, never registered; this is how consumers with dynamic heads, e.g. the zcode-router's workflow labels, use sys1)
 - `POST /v1/cascade` — cascade classify
 - `GET /v1/health` — provider report
 - `GET /v1/tasks` — task list

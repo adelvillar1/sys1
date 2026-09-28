@@ -29,17 +29,26 @@ DEFAULTS: dict = {
         "log_dir": str(DEFAULT_LOG_ROOT),
     },
     "providers": {
-        # Fastino hosted Decide (OpenAI-compatible chat-completions).
+        # Fastino hosted Decide (OpenAI-compatible chat-completions). Note: the
+        # provider id `decide` means this HOSTED wire; the Decide model itself
+        # is what the `local` provider runs (below). Not on any consumer's
+        # default path — see docs/plans/2026-09-28-fastino-decide-adoption.md.
         "decide_api_url": "https://api.fastino.ai/v1/chat/completions",
-        "decide_model": "fastino/GLiNER-2.5-Decide",
+        "decide_model": "fastino/GLiNER2.5-Decide",
         "decide_api_key_env": "FASTINO_API_KEY",
         # TypeSafe Jev (/v1/systemone, the SDK shape).
         "jev_api_url": "https://api.typesafe.ai/v1/systemone",
         "jev_model": "jev-1.13.0",
         "jev_api_key_env": "TYPESAFE_API_KEY",
-        # Local GLiNER2 — runs inside a uv-managed venv via subprocess.
+        # Local GLiNER2 — the fastino-prescribed classification API
+        # (gliner2.classification.Classifier). Two serving modes: a load-once
+        # classifier server (service/classifier_server.py) when
+        # `local_server_url` is set (per-provider `{pid}_server_url` overrides,
+        # e.g. a second server for decide_1b's bigger model), else a subprocess
+        # into the uv-managed venv. Same answer shapes either way.
         "local_venv": "/private/tmp/gliner-decide",
         "local_model": "fastino/GLiNER2.5-Decide",
+        "local_server_url": "",
         # ModernBERT-base as a sentence encoder (no fine-tuning; eval only).
         "modernbert_model": "answerdotai/ModernBERT-base",
         # HTTP transport.

@@ -81,6 +81,28 @@ ready, enable/disable without touching code.
   endpoints, auth boundaries, and the page itself (suite now 126 tests).
 
 ### Added (2026-09-28 — same branch, after the 0.2.0 cut)
+- **Fastino-prescribed local wire** — the `gliner` family (`local`,
+  `decide_1b`, `decide_multi`) now uses `gliner2.classification.Classifier`
+  + `ClassificationSchema` exactly as the vendor's own playground does:
+  one schema holding every head (`single` for choice/noul, `ordinal` for
+  score scales), one `decoder="independent"` decode, full
+  `probabilities` per answer (`confidence` = max). Spec construction is
+  pure (`sys1.providers.classification_schema_spec`). Legacy
+  `{label, confidence}` entries still parse. Measured: 12.4s per
+  subprocess classify → 361ms first / 144ms steady-state via the server.
+- **Classifier server** (`service/classifier_server.py`) — stdlib
+  load-once server run inside the gliner venv; playground contract
+  (`GET /ready`, `POST /infer`). Opt in via `providers.local_server_url`
+  (per-model `{pid}_server_url` overrides); `_gliner_wire` falls back to
+  the subprocess automatically, and a server that answers counts as
+  available in `sys1 doctor`.
+- **Inline task specs on the service** — `POST /v1/classify` accepts
+  `task_spec` (the `[[tasks]]` shape, built via the new
+  `sys1.task_from_spec`) so consumers with dynamic heads — e.g.
+  zcode-router's per-install workflow labels — can classify without
+  registering a task.
+- **`examples/routing-judge.toml`** — the zcode-router's four routing
+  questions as a sys1 task, for the local fastino Decide provider.
 - **Per-head confidence floors** — `Head.floor: float | None` plus a
   `floor=` parameter on `make_choice` / `make_noul` / `make_score` and
   the TOML/JSON task loader. Precedence ladder (`gating.effective_floor`):
@@ -101,10 +123,21 @@ ready, enable/disable without touching code.
   where the loader takes a list).
 
 ### Changed (2026-09-28)
+- **Local noul/score answer shapes** — noul answers are docs-accurate
+  (`{"type": "noul", "noul": p_yes}`, no confidence; gating derives
+  `max(p, 1−p)`); score answers map the selected ordinal level back to
+  `score_min + index` and carry a `legend` when the head has level
+  descriptions. `_LOCAL_INLINE` was migrated off the legacy
+  `GLiNER2.classify_text` surface (per-head loop, one model load per
+  call) to the prescribed API.
+- **Hosted `decide_model` string corrected** to `fastino/GLiNER2.5-Decide`
+  (was the dashed `GLiNER-2.5-Decide`); provider-id semantics documented:
+  `decide` = hosted wire, the Decide model is what `local` runs.
 - `tests/fixtures/jev_sample.json` noul answers are docs-accurate — no
   `confidence` key (it never existed on the wire); `test_sdk_shape`
   asserts the real shape.
-- Test suite: 126 → 188 tests; new `tests/test_recipe_pack.py`.
+- Test suite: 126 → 211 tests; new `tests/test_recipe_pack.py`,
+  `tests/test_local_wire.py`.
 - Docs: new `docs/features/gating-and-recipes.md`; noul gating and the
   floor precedence ladder added to TECHNICAL-DOCUMENTATION §5 and
   FUNCTIONAL-SPECIFICATIONS §1/§2/§3.

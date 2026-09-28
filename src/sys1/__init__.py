@@ -51,6 +51,7 @@ from .tasks import (
     list_tasks,
     load_tasks_file,
     register_task,
+    task_from_spec,
 )
 from .telemetry import (
     calibration_curve,
@@ -115,6 +116,7 @@ __all__ = [
     "probe",
     # tasks
     "register_task",
+    "task_from_spec",
     "get_task",
     "list_tasks",
     "heads_for",

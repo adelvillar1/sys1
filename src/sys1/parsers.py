@@ -130,6 +130,89 @@ def parse_local(parsed: dict, heads: list[Head]) -> dict[str, Answer]:
     return _match_keys_to_heads(parsed, heads)
 
 
+def parse_gliner2(
+    parsed: dict, heads: list[Head], spec: dict[str, dict] | None = None
+) -> dict[str, Answer]:
+    """
+    Parse the fastino-prescribed response shape:
+    `{head_id: {"labels": [...], "probabilities": {level: p}}}`.
+
+    The confidence basis is the full distribution — `confidence` is
+    `max(probabilities)` for choice/score heads. Noul heads emit the
+    docs-accurate shape `{"type": "noul", "noul": p_yes}` with **no**
+    confidence field: the probability of "true" is the answer, and gating
+    derives `max(p, 1 - p)` (see `gating.answer_confidence`). Score heads map
+    the selected ordinal level back to `score_min + level_index`.
+
+    Legacy entries (`{"label": ..., "confidence": ...}` from the pre-migration
+    script or hand-written mocks) still parse; missing heads become declined.
+    `spec` is the `classification_schema_spec(heads)` output — needed to map
+    ordinal level strings back to numeric scores.
+    """
+    spec = spec or {}
+    out: dict[str, Answer] = {}
+    for head in heads:
+        raw = parsed.get(head.id) if isinstance(parsed, dict) else None
+        if not isinstance(raw, dict):
+            out[head.id] = declined("missing")
+            continue
+        if "_error" in raw:
+            out[head.id] = declined(f"error:{str(raw['_error'])[:120]}")
+            continue
+        probs_raw = raw.get("probabilities")
+        if isinstance(probs_raw, dict):
+            out[head.id] = _prescribed_answer(head, raw, spec.get(head.id) or {})
+        else:
+            out[head.id] = _legacy_answer(head, raw)
+    return out
+
+
+def _prescribed_answer(head: Head, raw: dict, head_spec: dict) -> Answer:
+    probs = {
+        str(k): float(v)
+        for k, v in (raw.get("probabilities") or {}).items()
+        if isinstance(v, (int, float)) and not isinstance(v, bool)
+    }
+    labels = [str(v) for v in raw.get("labels") or []]
+    conf = max(probs.values()) if probs else None
+
+    if head.kind == "noul":
+        # docs-accurate: no confidence field; the probability of "true" gates
+        # through derived certainty. A missing p_yes is a decline (escalates).
+        yes = str(head.metadata.get("yes", "yes"))
+        return {"type": "noul", "noul": probs.get(yes), "probabilities": probs}
+
+    answer: Answer = {"probabilities": probs, "confidence": conf, "type": head.kind}
+    if head.kind == "score":
+        levels = list(head_spec.get("labels") or [])
+        score_min = head_spec.get("score_min", head.score_min)
+        score = None
+        if labels and labels[0] in levels:
+            score = float(score_min + levels.index(labels[0]))
+        elif labels and labels[0].lstrip("-").replace(".", "", 1).isdigit():
+            score = float(labels[0])
+        answer["score"] = score
+        if head.descriptions:
+            answer["legend"] = {
+                str(score_min + i): head.descriptions.get(lv, lv) for i, lv in enumerate(levels)
+            }
+        return answer
+
+    # choice
+    answer["label"] = labels[0] if labels else None
+    if len(labels) > 1:
+        answer["labels"] = labels
+    return answer
+
+
+def _legacy_answer(head: Head, raw: dict) -> Answer:
+    label = raw.get("label")
+    conf = raw.get("confidence")
+    if label is None and conf is None:
+        return declined("missing")
+    return {"label": label, "confidence": conf, "type": "choice"}
+
+
 # ── ModernBERT eval ──────────────────────────────────────────────────────────
 
 def parse_modernbert(parsed: dict, heads: list[Head]) -> dict[str, Answer]:

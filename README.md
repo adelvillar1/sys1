@@ -55,7 +55,7 @@ dependencies; FastAPI is opt-in via `pip install 'sys1[service]'`.
 |----|---------|-----------|---------|
 | `decide` | Fastino hosted `GLiNER-2.5-Decide` (OpenAI-compatible chat-completions) | Fast, structured schema (`{"classifications": [...]}`), $0.03/$0 pricing on the docs / $0.15/$0.15 on the live catalog — verify before budgeting | Flat `labels` only, no per-option descriptions on hosted. HTTP 425 on cold models; retry with backoff. `constrained_classification` is gated to `multi-v1`, not hosted Decide. |
 | `jev` | TypeSafe hosted `Jev-1.13.0` (`/v1/systemone`) | Three primitives (choice / noul / score), per-option `criteria` descriptions, decision-quality scores on benchmarks (Decision Index 51.67 vs Decide's 9.98) | Higher latency than Decide. `confidence` is a distribution-shape statistic — do NOT threshold it on the same number as Decide. |
-| `local` | `gliner2` in a uv-managed venv (subprocess) | No network, no cost, runs offline | Needs the venv path. Slower per-call (model load), unless you wrap a persistent server. |
+| `local` | `fastino/GLiNER2.5-Decide` via the prescribed `gliner2.classification` API (load-once classifier server, or venv subprocess) | No network, no cost, runs offline; one decode for all heads; full per-label probabilities | Needs the venv path (and, server-side, a long-lived process — see below) |
 | `modernbert` | `answerdotai/ModernBERT-base` sentence encoder (eval only, no fine-tuning) | Fast + cheap + a useful calibration comparison | Noisy; lower confidence floor (0.55 default) reflects that. Use for calibration, not for gates. |
 
 ### Candidate providers (opt-in)
@@ -115,6 +115,38 @@ Floors apply per head (`head.floor`), per task, per provider (config key),
 or globally, in that order of precedence — see
 [`docs/features/gating-and-recipes.md`](docs/features/gating-and-recipes.md).
 
+### Provider naming (important)
+
+The provider id **`decide` means the hosted Fastino wire** (api.fastino.ai) —
+a different serving path from the Decide *model*, which is what the `local`
+provider runs via the fastino-prescribed `gliner2.classification` API. The
+library's consumers (dev-decisions, zcode-router-kit) default to the local
+fastino path; hosted is available but not on anyone's default route.
+
+### Serving the local fastino wire
+
+Two modes, identical answer shapes:
+
+```bash
+# one-shot subprocess (default; pays the ~10s model load per call)
+sys1 classify --provider local --task change -i diff.txt
+
+# load-once classifier server (recommended) — run inside the venv:
+/private/tmp/gliner-decide/bin/python service/classifier_server.py \
+    --model fastino/GLiNER2.5-Decide --port 8414
+```
+
+```toml
+# ~/.config/sys1/config.toml
+[providers]
+local_server_url = "http://127.0.0.1:8414"   # per-model: {pid}_server_url
+```
+
+Measured on an M-series CPU (2026-09-28): 12.4s per subprocess classify →
+361ms first / 144ms steady-state through the server. With the server
+configured but down, classify falls back to the subprocess automatically;
+telemetry records which mode served (`mode`, `server_fallback`).
+
 ### Jev usage notes
 
 One `/v1/systemone` request carries every head — `classify()` already fans
@@ -147,7 +179,7 @@ uvicorn service.main:app --host 0.0.0.0 --port 8400
 git clone https://github.com/adelvillar1/sys1.git
 cd sys1
 uv sync --all-extras
-uv run pytest                   # 188 tests
+uv run pytest                   # 211 tests
 uv run sys1 doctor              # provider availability check
 uv run sys1 providers           # registry: core + candidates, flag/config/health
 ```
@@ -375,13 +407,14 @@ sys1/
 │   ├── telemetry.py     JSONL log, redaction, histogram, feedback, calibration
 │   ├── api.py           classify(), cascade_classify(), health_report()
 │   └── cli.py           sys1 classify / doctor / providers / tasks / version
-├── tests/               188 tests, recorded fixtures + mocked transports
+├── tests/               211 tests, recorded fixtures + mocked transports
 ├── service/
 │   ├── main.py          FastAPI wrapper (classify/cascade/health/tasks/calibration)
 │   ├── dashboard.py     control dashboard router + single-page app
+│   ├── classifier_server.py  load-once GLiNER2.5 server (fastino-prescribed API)
 │   ├── pyproject.toml   service-specific deps
 │   └── Dockerfile       container build
-├── examples/            recipe pack: guardrail/citation task files + pattern scripts
+├── examples/            recipe pack + routing-judge task for zcode-router
 ├── pyproject.toml       package metadata + optional extras
 ├── README.md            (you're here)
 ├── CHANGELOG.md         version history

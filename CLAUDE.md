@@ -66,7 +66,7 @@ For trivial changes (typos, single-line fixes, dependency bumps), the cycle comp
 ## Common commands
 
 ```bash
-.venv/bin/python -m pytest -q          # full test suite (188 tests)
+.venv/bin/python -m pytest -q          # full test suite (211 tests)
 .venv/bin/python -m pytest tests/test_gating.py -q   # one module
 .venv/bin/ruff check .                  # lint (config in pyproject.toml)
 .venv/bin/python -m sys1.cli doctor     # provider availability snapshot
@@ -80,11 +80,11 @@ For trivial changes (typos, single-line fixes, dependency bumps), the cycle comp
 
 ## Today's state
 
-- v0.2.0 on `feature/provider-flags-and-dashboard` (provider flags + control dashboard + noul gating/per-head floors/recipe pack), unmerged to `main` (which is at v0.1.0).
-- 188 tests passing, 82% coverage; `cli.py` at 0%, `gating.py` at 100%.
+- v0.2.0 on `feature/provider-flags-and-dashboard` (provider flags + control dashboard + noul gating/per-head floors/recipe pack + fastino-prescribed local wire), unmerged to `main` (which is at v0.1.0).
+- 211 tests passing, `gating.py` at 100%.
 - 16 ruff errors outstanding, all pre-existing (E741, F841, SIM115, SIM117, B007, B905, RUF022, RUF046).
-- The 6 defects from the 2026-09-28 review are fixed (plan `2026-09-28-sys1-correctness-fixes` landed as `9e13e16`).
-- Active plan: `2026-09-28-noul-gating-and-recipe-pack` — noul answers now gate on derived certainty `max(p, 1 − p)`, `Head.floor` sits above the task floor in the precedence ladder, and five vendor recipes ship under `examples/` (stub-tested).
+- The 6 defects from the 2026-09-28 review are fixed (plan `2026-09-28-sys1-correctness-fixes` landed as `9e13e16`); the noul-gating plan completed the same day.
+- Active plan: `2026-09-28-fastino-decide-adoption` — sys1 is the one fastino integration; `local` uses the vendor-prescribed `gliner2.classification` API (one decode, full probabilities) with a load-once classifier server (`local_server_url`) or subprocess fallback; the service accepts inline `task_spec`; consumers (dev-decisions, zcode-router) move onto sys1 per the plan. `decide` id = hosted wire; the Decide model is what `local` runs.
 
 ---
 

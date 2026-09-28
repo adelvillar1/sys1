@@ -94,7 +94,15 @@ def _secure_eq(a: str, b: str) -> bool:
 
 class ClassifyRequest(BaseModel):
     provider: str | list[str] = Field(..., description="provider id, 'both'/'all' alias, comma list, or a list")
-    task: str = Field(..., description="registered task name")
+    task: str | None = Field(None, description="registered task name")
+    task_spec: dict | None = Field(
+        None,
+        description=(
+            "inline [[tasks]]-shaped task definition (id + heads) — built via "
+            "sys1.task_from_spec, not registered; use for dynamic heads "
+            "(e.g. workflow labels that change per install)"
+        ),
+    )
     text: str = Field(..., description="the payload to classify")
     confidence_floor: float | None = Field(None, ge=0, le=1, description="override cfg.classify.confidence_floor")
     block_on_classification: bool | None = Field(None, description="when true, escalate returns block")
@@ -140,7 +148,15 @@ class ClassifyResponse(BaseModel):
 @app.post("/v1/classify", response_model=ClassifyResponse, dependencies=[Depends(require_auth)])
 def classify_endpoint(req: ClassifyRequest) -> ClassifyResponse:
     cfg = _cfg_for(req)
-    result = sys1.classify(req.provider, req.task, req.text, cfg=cfg, log=req.log)
+    if req.task_spec is not None:
+        if not isinstance(req.task_spec, dict) or not req.task_spec.get("id"):
+            raise HTTPException(status_code=422, detail="task_spec must be an object with an 'id'")
+        task = sys1.task_from_spec(req.task_spec)
+    elif req.task:
+        task = req.task
+    else:
+        raise HTTPException(status_code=422, detail="provide 'task' (registered name) or 'task_spec' (inline)")
+    result = sys1.classify(req.provider, task, req.text, cfg=cfg, log=req.log)
     return _to_response(result, req.text)
 
 
