@@ -20,7 +20,6 @@ from typing import Any
 
 from .types import Answer, Head, declined
 
-
 # ── Decide (OpenAI-compatible chat-completions) ───────────────────────────────
 
 def parse_decide(resp: dict, heads: list[Head]) -> dict[str, Answer]:
@@ -99,7 +98,20 @@ def _jev_entry(head: Head, a: dict) -> Answer:
         entry["legend"] = a.get("legend")
         entry["confidence"] = a.get("confidence")
     elif kind == "noul":
-        entry["noul"] = a.get("noul")
+        raw_noul = a.get("noul")
+        if raw_noul is None:
+            # Jev sometimes returns the boolean under "label" instead of "noul".
+            raw_label = a.get("label")
+            if isinstance(raw_label, bool):
+                entry["noul"] = raw_label
+            elif isinstance(raw_label, str) and raw_label.lower() in ("yes", "no"):
+                entry["noul"] = raw_label.lower() == "yes"
+            else:
+                entry["noul"] = None
+        elif isinstance(raw_noul, str) and raw_noul.lower() in ("yes", "no"):
+            entry["noul"] = raw_noul.lower() == "yes"
+        else:
+            entry["noul"] = raw_noul
         entry["confidence"] = a.get("confidence")
     else:
         entry["_raw"] = str(a)
@@ -224,7 +236,20 @@ def _as_answer(head: Head | None, value: dict) -> Answer:
         answer["legend"] = value.get("legend")
         answer["confidence"] = value.get("confidence")
     elif kind == "noul":
-        answer["noul"] = value.get("noul")
+        raw_noul = value.get("noul")
+        if raw_noul is None:
+            # Non-Jev providers (Decide, local, ModernBERT, candidates) return
+            # their answer under "label". Fall back so we don't discard the
+            # signal and force an unnecessary escalation.
+            raw_label = value.get("label")
+            if isinstance(raw_label, bool):
+                answer["noul"] = raw_label
+            elif isinstance(raw_label, str) and raw_label.lower() in ("yes", "no"):
+                answer["noul"] = raw_label.lower() == "yes"
+            else:
+                answer["noul"] = None
+        else:
+            answer["noul"] = raw_noul
         answer["confidence"] = value.get("confidence")
     else:
         answer.update(value)
@@ -232,7 +257,6 @@ def _as_answer(head: Head | None, value: dict) -> Answer:
     for extra in ("all_scores", "top2_gap", "embedding_norm"):
         if extra in value:
             answer[extra] = value[extra]
-    if answer.get("label") is None and answer.get("noul") is None and answer.get("score") is None:
-        if "_raw" in value:
-            answer["_raw"] = value["_raw"]
+    if answer.get("label") is None and answer.get("noul") is None and answer.get("score") is None and "_raw" in value:
+        answer["_raw"] = value["_raw"]
     return answer

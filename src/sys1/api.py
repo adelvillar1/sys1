@@ -16,7 +16,7 @@ from typing import Any
 
 from . import providers as _providers
 from .config import load_config
-from .gating import final_exit_code, interpret
+from .gating import interpret
 from .tasks import get_task, heads_for
 from .telemetry import confidence_histogram, log_record, sanitize_for_log
 from .types import Answer, ClassifyResult, Task
@@ -89,7 +89,9 @@ def classify(
             summary=["No provider succeeded — unclassified."],
         )
 
-    verdict, escalated, summary = interpret(answers, cfg, heads=_all_heads(resolved_task, resolved_providers))
+    verdict, escalated, summary = interpret(
+        answers, cfg, heads=_all_heads(resolved_task, resolved_providers), task=resolved_task
+    )
 
     result = ClassifyResult(
         task=resolved_task.id,
@@ -157,14 +159,16 @@ def cascade_classify(
             continue
 
         # did every head clear the floor on this provider?
+        # Skip meta keys (_unmatched:*, _raw, etc.) — they aren't heads.
+        real_answers = {k: v for k, v in prov_answers.items() if not k.startswith("_")}
         conf_ok = all(
             float(a.get("confidence") or 0) >= floor
-            for a in prov_answers.values()
+            for a in real_answers.values()
             if isinstance(a, dict)
         )
         labels_ok = all(
             (a.get("label") is not None or a.get("score") is not None or a.get("noul") is not None)
-            for a in prov_answers.values()
+            for a in real_answers.values()
             if isinstance(a, dict)
         )
         if conf_ok and labels_ok:
@@ -182,7 +186,10 @@ def cascade_classify(
     if verdict_provider:
         verdict_payload = {verdict_provider: answers[verdict_provider]}
         verdict, escalated, summary = interpret(
-            verdict_payload, cfg, heads=heads_for(resolved_task, verdict_provider)
+            verdict_payload,
+            cfg,
+            heads=heads_for(resolved_task, verdict_provider),
+            task=resolved_task,
         )
     else:
         verdict, escalated, summary = "error", True, ["cascade: no provider succeeded"]

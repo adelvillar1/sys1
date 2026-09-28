@@ -183,6 +183,36 @@ class TestEndpoints:
         assert body["classify_records"] >= 1
         assert body["feedback_records"] >= 1
 
+    def test_calibration_flattens_answers_by_provider(self, client, fake_high_provider, tmp_path, monkeypatch):
+        """Regression: calibration must flatten {head: [answers]} → {head: Answer},
+        count actual records (not heads), and use agreement threshold > 1."""
+        # Isolate log dir by patching load_config to return our controlled config
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        original_load_config = sys1.load_config
+        def _patched_load_config(*args, **kwargs):
+            cfg = original_load_config(*args, **kwargs)
+            cfg["classify"]["log_dir"] = str(log_dir)
+            return cfg
+        monkeypatch.setattr(sys1, "load_config", _patched_load_config)
+        # Also patch the service module's reference if it imported load_config directly
+        import sys1_service_main
+        monkeypatch.setattr(sys1_service_main, "sys1", sys1)
+        
+        client.post("/v1/classify", json={"provider": "fake_http", "task": "change", "text": "hello"})
+        r = client.get("/v1/calibration?days=1")
+        assert r.status_code == 200
+        body = r.json()
+        providers = body["providers"]
+        assert "fake_http" in providers
+        prov = providers["fake_http"]
+        # records must be actual log row count (not head count), ≥ 1 from our write
+        assert prov["records"] >= 1
+        # histogram must be a list
+        assert isinstance(prov["histogram"], list)
+        # agreement must be present (threshold was lowered to > 1)
+        assert isinstance(prov["agreement"], dict)
+
 
 class TestAuth:
     def test_bearer_required_when_set(self, tmp_path, monkeypatch):

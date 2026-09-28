@@ -84,6 +84,25 @@ class TestInterpret:
         _, esc, _ = interpret(answers, cfg)
         assert esc is False
 
+    def test_block_on_classification_returns_block(self):
+        """When block_on_classification=True and answers escalate, verdict must be 'block'."""
+        cfg = _make_cfg()
+        cfg["classify"]["block_on_classification"] = True
+        answers = {"decide": {"diff_type": {"type": "choice", "label": "feat", "confidence": 0.4}}}
+        verdict, escalated, _ = interpret(answers, cfg)
+        assert verdict == "block"
+        assert escalated is True
+
+    def test_task_confidence_floor_overrides_global(self):
+        """Task.confidence_floor must override cfg.classify.confidence_floor."""
+        cfg = _make_cfg(floor=0.7)
+        heads = sys1.heads_for("change", "decide")
+        task = sys1.Task(id="change", heads=heads, confidence_floor=0.5)
+        answers = {"decide": {"diff_type": {"type": "choice", "label": "feat", "confidence": 0.6}}}
+        verdict, escalated, _ = interpret(answers, cfg, task=task)
+        assert verdict == "pass"
+        assert escalated is False
+
 
 class TestFinalExitCode:
     def test_pass_is_zero(self):

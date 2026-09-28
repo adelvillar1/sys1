@@ -34,3 +34,6 @@ htmlcov/
 # sys1 runtime artifacts
 sys1-*.log
 *.log
+
+# Local env reference (gitignored; holds credentials/URLs)
+CLAUDE.local.md

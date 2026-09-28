@@ -13,6 +13,7 @@ dashboards see the same keys: `http_status`, `latency_ms`, `retries`,
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import socket
@@ -49,10 +50,7 @@ def http_post_json(
     Retries on HTTP 5xx, network errors, and (Fastino-style) "warming" errors
     with exponential backoff. 4xx raises immediately.
     """
-    if isinstance(body, str):
-        data = body.encode("utf-8")
-    else:
-        data = json.dumps(body).encode("utf-8")
+    data = body.encode("utf-8") if isinstance(body, str) else json.dumps(body).encode("utf-8")
     headers = {
         "Content-Type": "application/json",
         "Accept": "application/json",
@@ -93,10 +91,8 @@ def http_post_json(
             return parsed
         except urllib.error.HTTPError as e:
             body_text = ""
-            try:
+            with contextlib.suppress(Exception):
                 body_text = e.read().decode("utf-8", errors="replace")[:300]
-            except Exception:
-                pass
             last_err = f"HTTP {e.code}: {body_text}"
             if 500 <= e.code < 600 and attempt < max_retries:
                 _set_telemetry(telemetry, e.code, t0, attempt, structured_ok=False)
@@ -252,15 +248,16 @@ def _gliner_wire(pid: str, model_key: str = "local_model"):
 
         try:
             parsed = json.loads(proc.stdout)
+            structured = True
         except json.JSONDecodeError:
             parsed = {"_raw": proc.stdout[:200]}
             telemetry["error_kind"] = "json"
-            telemetry["structured_ok"] = False
+            structured = False
 
         out = parse_local(parsed, heads)
         null_count = sum(1 for a in out.values() if a.get("label") is None and a.get("noul") is None)
         telemetry["null_label_count"] = null_count
-        telemetry["structured_ok"] = True
+        telemetry["structured_ok"] = structured
         return out
 
     return _fn
@@ -496,12 +493,14 @@ def _modernbert_classify(text: str, heads: list[Head], cfg: dict, telemetry: dic
 
     try:
         parsed = json.loads(proc.stdout)
+        structured = True
     except json.JSONDecodeError:
         parsed = {"_raw": proc.stdout[:200]}
         telemetry["error_kind"] = "json"
+        structured = False
 
     out = parse_modernbert(parsed, heads)
-    telemetry["structured_ok"] = True
+    telemetry["structured_ok"] = structured
     return out
 
 

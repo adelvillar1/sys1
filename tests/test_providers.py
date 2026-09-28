@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import io
 import json
-import subprocess
 import urllib.error
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -21,8 +20,6 @@ from sys1.providers import (
     is_available,
     resolve_providers,
 )
-from sys1.types import Head, make_choice
-
 
 # ── resolve_providers ─────────────────────────────────────────────────────────
 
@@ -280,11 +277,43 @@ class TestLocalProvider:
         venv_py.touch()
         cfg["providers"]["local_venv"] = str(tmp_path / "venv")
         proc = MagicMock(returncode=1, stdout="", stderr="boom")
-        with patch("subprocess.run", return_value=proc):
-            with pytest.raises(RuntimeError):
-                sys1.call_provider("local", "x", sys1.heads_for("change", "local"), cfg, {})
+        with patch("subprocess.run", return_value=proc), pytest.raises(RuntimeError):
+            sys1.call_provider("local", "x", sys1.heads_for("change", "local"), cfg, {})
 
     def test_subprocess_no_venv_raises(self, cfg):
         # cfg fixture sets local_venv to a missing path
         with pytest.raises(RuntimeError):
             sys1.call_provider("local", "x", sys1.heads_for("change", "local"), cfg, {})
+
+    def test_structured_ok_false_on_bad_json(self, cfg, tmp_path: Path):
+        """Regression: structured_ok must be False when subprocess returns non-JSON stdout."""
+        venv_py = tmp_path / "venv" / "bin" / "python"
+        venv_py.parent.mkdir(parents=True)
+        venv_py.touch()
+        cfg["providers"]["local_venv"] = str(tmp_path / "venv")
+        proc = MagicMock(returncode=0, stdout="NOT JSON", stderr="")
+        tele: dict = {}
+        with patch("subprocess.run", return_value=proc):
+            result = sys1.call_provider("local", "x", sys1.heads_for("change", "local"), cfg, tele)
+        assert tele["structured_ok"] is False
+        assert tele["error_kind"] == "json"
+        # Parser should have declined all heads (confidence=0.0)
+        heads = sys1.heads_for("change", "local")
+        assert all(result[h.id]["confidence"] == 0.0 for h in heads)
+
+
+class TestModernBertProvider:
+    def test_structured_ok_false_on_bad_json(self, cfg, tmp_path: Path):
+        """Regression: structured_ok must be False when ModernBERT subprocess returns non-JSON."""
+        venv_py = tmp_path / "venv" / "bin" / "python"
+        venv_py.parent.mkdir(parents=True)
+        venv_py.touch()
+        cfg["providers"]["local_venv"] = str(tmp_path / "venv")
+        proc = MagicMock(returncode=0, stdout="NOT JSON", stderr="")
+        tele: dict = {}
+        with patch("subprocess.run", return_value=proc):
+            result = sys1.call_provider("modernbert", "x", sys1.heads_for("change", "modernbert"), cfg, tele)
+        assert tele["structured_ok"] is False
+        assert tele["error_kind"] == "json"
+        heads = sys1.heads_for("change", "modernbert")
+        assert all(result[h.id]["confidence"] == 0.0 for h in heads)

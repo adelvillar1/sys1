@@ -13,8 +13,9 @@ dev-decisions is gone: results dict keys are always head.id.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
 HeadKind = Literal["choice", "noul", "score"]
 

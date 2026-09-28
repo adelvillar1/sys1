@@ -21,7 +21,7 @@ same default here; consumers should re-tune for Jev via
 
 from __future__ import annotations
 
-from .types import Answer, Head, Verdict
+from .types import Answer, Head, Task, Verdict
 
 # Default confidence floors per provider family. Tune per provider with
 # `{provider}_confidence_floor` in [classify] (honored for every registered
@@ -47,6 +47,7 @@ def interpret(
     answers_by_provider: dict[str, dict[str, Answer]],
     cfg: dict,
     heads: list[Head] | None = None,
+    task: Task | None = None,
 ) -> tuple[Verdict, bool, list[str]]:
     """
     Walk every provider's answers, apply the per-provider floor, and decide.
@@ -54,11 +55,16 @@ def interpret(
     Returns `(verdict, escalated, summary)`. `summary` is a list of lines that
     can be joined with `\n` for the human-facing gate output — same shape the
     dev-decisions CLI prints today.
+
+    `task` (optional) supplies the task's own `confidence_floor` override;
+    when set it takes precedence over the global `cfg.classify.confidence_floor`
+    (per-provider `{pid}_confidence_floor` overrides still win — see
+    `_floors_for`).
     """
     escalated = False
     summary: list[str] = []
-    by_head = _heads_by_id(heads)
-    floors = _floors_for(cfg)
+    task_floor = task.confidence_floor if task is not None else None
+    floors = _floors_for(cfg, task_floor=task_floor)
 
     for prov, answers in answers_by_provider.items():
         floor = floors.get(prov, cfg["classify"].get("confidence_floor", 0.7))
@@ -79,7 +85,13 @@ def interpret(
                 continue
             if conf is not None and float(conf) < floor:
                 escalated = True
-    verdict: Verdict = "escalate" if escalated else "pass"
+    verdict: Verdict
+    if not escalated:
+        verdict = "pass"
+    elif cfg["classify"].get("block_on_classification", False):
+        verdict = "block"
+    else:
+        verdict = "escalate"
     return verdict, escalated, summary
 
 
@@ -106,14 +118,20 @@ def _heads_by_id(heads: list[Head] | None) -> dict[str, Head]:
     return {h.id: h for h in (heads or [])}
 
 
-def _floors_for(cfg: dict) -> dict[str, float]:
-    """Merge code defaults ← cfg.classify.confidence_floor ← per-provider overrides."""
+def _floors_for(cfg: dict, task_floor: float | None = None) -> dict[str, float]:
+    """Merge code defaults ← global floor ← task floor ← per-provider overrides.
+
+    `task_floor` (a Task's own `confidence_floor`) overrides the global
+    `cfg.classify.confidence_floor` but is still overridden by explicit
+    per-provider `{pid}_confidence_floor` config keys.
+    """
     from .providers import REGISTRY
 
     base = dict(_DEFAULT_FLOORS)
     global_floor = cfg["classify"].get("confidence_floor")
-    if global_floor is not None:
-        base = {k: float(global_floor) for k in base}
+    effective_global = task_floor if task_floor is not None else global_floor
+    if effective_global is not None:
+        base = {k: float(effective_global) for k in base}
     # per-provider overrides win for every registered provider, not just those
     # with a default entry above.
     for prov in list(REGISTRY) + list(_DEFAULT_FLOORS):

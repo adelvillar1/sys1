@@ -281,11 +281,20 @@ def calibration_endpoint(days: int = Query(30, ge=1, le=365)) -> JSONResponse:
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     classify_rows, feedback_rows = _load_log_rows(log_root, cutoff)
     by_provider: dict[str, dict] = {}
-    for prov, answers in _answers_by_provider(classify_rows).items():
+    for prov, raw_answers in _answers_by_provider(classify_rows).items():
+        # _answers_by_provider returns {head_id: [{_answer: ..., ...}, ...]}.
+        # Flatten to the {head_id: Answer} shape the histogram / agreement
+        # helpers expect — take the most recent entry per head.
+        answers: dict[str, Any] = {}
+        record_count = 0
+        for head_id, entries in raw_answers.items():
+            if entries:
+                answers[head_id] = entries[-1].get("_answer", {})
+                record_count += len(entries)
         by_provider[prov] = {
-            "records": len(answers),
+            "records": record_count,
             "histogram": confidence_histogram({"tmp": answers}).get("tmp", []),
-            "agreement": sys1.provider_agreement(answers) if len(answers) > 5 else {},
+            "agreement": sys1.provider_agreement(answers) if len(answers) > 1 else {},
         }
     return JSONResponse(
         {

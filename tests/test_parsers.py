@@ -134,3 +134,51 @@ class TestParseModernbert:
         heads = sys1.heads_for("change", "modernbert")
         parsed = sys1.parsers.parse_modernbert(raw, heads)
         assert all(parsed[h.id]["confidence"] == 0.0 for h in heads)
+
+
+class TestNoulFallback:
+    """Regression: noul=None must fall back to label; yes/no strings must coerce to bool."""
+
+    def test_noul_none_falls_back_to_label(self):
+        """When noul is None but label is a bool, use the label."""
+        resp = {
+            "answers": {
+                "breaking_change": {"type": "noul", "noul": None, "label": True, "confidence": 0.9}
+            }
+        }
+        heads = [sys1.heads_for("change", "jev")[2]]  # breaking_change head
+        parsed = sys1.parsers.parse_jev(resp, heads)
+        assert parsed["breaking_change"]["noul"] is True
+
+    def test_noul_none_label_false(self):
+        """False label should also be used when noul is None."""
+        resp = {
+            "answers": {
+                "breaking_change": {"type": "noul", "noul": None, "label": False, "confidence": 0.9}
+            }
+        }
+        heads = [sys1.heads_for("change", "jev")[2]]
+        parsed = sys1.parsers.parse_jev(resp, heads)
+        assert parsed["breaking_change"]["noul"] is False
+
+    def test_noul_yes_string_coerces_to_true(self):
+        """String 'yes' should coerce to True."""
+        resp = {
+            "answers": {
+                "breaking_change": {"type": "noul", "noul": "yes", "confidence": 0.9}
+            }
+        }
+        heads = [sys1.heads_for("change", "jev")[2]]
+        parsed = sys1.parsers.parse_jev(resp, heads)
+        assert parsed["breaking_change"]["noul"] is True
+
+    def test_noul_no_string_coerces_to_false(self):
+        """String 'no' should coerce to False."""
+        resp = {
+            "answers": {
+                "breaking_change": {"type": "noul", "noul": "no", "confidence": 0.9}
+            }
+        }
+        heads = [sys1.heads_for("change", "jev")[2]]
+        parsed = sys1.parsers.parse_jev(resp, heads)
+        assert parsed["breaking_change"]["noul"] is False

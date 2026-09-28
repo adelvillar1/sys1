@@ -8,7 +8,6 @@ tests live in test_providers.py.
 from __future__ import annotations
 
 import json
-from unittest.mock import patch
 
 import pytest
 
