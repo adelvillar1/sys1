@@ -27,13 +27,11 @@
     },
     "breaking_change": {
       "type": "noul",
-      "noul": false,
-      "confidence": 0.92
+      "noul": 0.08
     },
     "personal_data": {
       "type": "noul",
-      "noul": false,
-      "confidence": 0.88
+      "noul": 0.04
     }
   },
   "model": "jev-1.13.0",

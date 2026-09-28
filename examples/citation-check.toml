@@ -1,0 +1,23 @@
+# Citation check — official cookbook /cookbooks/citation_check (via
+# systemonemodels.org/recipes → citation-check-noul).
+#
+# Pattern: one Noul ("does the quoted passage support the claim?") plus an
+# optional support-strength Score. Gate on the noul probability; treat a
+# confident "no" as a real answer (it clears the certainty floor), while an
+# unsupported claim fails the high-stakes floor and escalates.
+#
+# The 0.85 floor is the official /patterns/confidence-routing rule: high-stakes
+# actions auto-proceed only above ~0.85, below that a human confirms. Query and
+# passage travel together in `state` — the model never sees more than the one
+# claim it is checking.
+#
+# Note: inline tables must stay on one line — TOML 1.0 forbids newlines
+# inside `{ ... }`, and tomllib (the stdlib parser) enforces it.
+
+[[tasks]]
+id = "citation_check"
+description = "Does a quoted passage actually support the claim it is cited for?"
+heads = [
+  { id = "supported", kind = "noul", floor = 0.85, task = "Does the quoted passage support the claim it is cited for?", descriptions = { yes = "The passage states or directly implies the claim.", no = "The passage does not support the claim, or is unrelated to it." } },
+  { id = "support_strength", kind = "score", task = "How strongly does the passage support the claim?", score_min = 1, score_max = 3, legend = ["Contradicts or unrelated", "Weakly related", "Directly supports"] },
+]

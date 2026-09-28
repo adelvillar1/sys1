@@ -10,38 +10,28 @@
 id = "security_review"
 description = "Flag diffs that touch auth, PII, or crypto."
 heads = [
-  { id = "touches_auth",
-    kind = "noul",
-    task = "Does this diff change auth, sessions, tokens, or credential handling?" },
-  { id = "touches_pii",
-    kind = "noul",
-    task = "Does this diff read, write, or transmit personally-identifiable data (email, phone, SSN, address, or health/financial fields)?" },
-  { id = "touches_crypto",
-    kind = "noul",
-    task = "Does this diff add or modify cryptographic primitives, key material, or password hashing?" },
-  { id = "severity",
-    kind = "choice",
-    task = "If any of the above flags fire, how severe is the exposure?",
-    labels = ["none", "low", "medium", "high"] },
+  { id = "touches_auth", kind = "noul", task = "Does this diff change auth, sessions, tokens, or credential handling?" },
+  { id = "touches_pii", kind = "noul", task = "Does this diff read, write, or transmit personally-identifiable data (email, phone, SSN, address, or health/financial fields)?" },
+  { id = "touches_crypto", kind = "noul", task = "Does this diff add or modify cryptographic primitives, key material, or password hashing?" },
+  { id = "severity", kind = "choice", task = "If any of the above flags fire, how severe is the exposure?", labels = ["none", "low", "medium", "high"] },
 ]
 
 # Provider-specific overrides: Jev gets richer criteria descriptions.
-[tasks.provider_heads.jev]
-severity = { id = "severity", kind = "choice", task = "If any of the above flags fire, how severe is the exposure?",
-             labels = ["none", "low", "medium", "high"],
-             descriptions = {none = "Nothing flagged.", low = "Flagged, no exposure.", medium = "Internal exposure.", high = "External / user-facing exposure."} }
+# provider_heads maps a provider id to a LIST of head specs (the loader's
+# shape is the same as `heads` above; TOML 1.0 forbids newlines inside
+# `{ ... }`, and tomllib (the stdlib parser) enforces it).
+[[tasks.provider_heads.jev]]
+id = "severity"
+kind = "choice"
+task = "If any of the above flags fire, how severe is the exposure?"
+labels = ["none", "low", "medium", "high"]
+descriptions = { none = "Nothing flagged.", low = "Flagged, no exposure.", medium = "Internal exposure.", high = "External / user-facing exposure." }
 
 
 [[tasks]]
 id = "doc_quality"
 description = "Classify README / docs changes for quality and audience fit."
 heads = [
-  { id = "audience",
-    kind = "choice",
-    task = "Who is this doc aimed at?",
-    labels = ["end-user", "developer", "operator", "internal"] },
-  { id = "completeness",
-    kind = "choice",
-    task = "How complete is the doc?",
-    labels = ["stub", "partial", "complete"] },
+  { id = "audience", kind = "choice", task = "Who is this doc aimed at?", labels = ["end-user", "developer", "operator", "internal"] },
+  { id = "completeness", kind = "choice", task = "How complete is the doc?", labels = ["stub", "partial", "complete"] },
 ]

@@ -32,13 +32,17 @@ This is the user-flow contract — what the system does from a caller's perspect
 - Calls each provider in order, collecting `{head_id: Answer}` per provider.
 - If no provider succeeds, returns `verdict: "error"`, `escalated: true`, `reason` explaining why.
 - If at least one succeeds, runs `interpret()` over the collected answers.
-- Default verdict is `"pass"`; becomes `"escalate"` if any head has `label is None` or `confidence < floor`.
+- Default verdict is `"pass"`; becomes `"escalate"` if any head is declined (`label is None`) or its confidence is below the head's floor.
 - Optionally appends a JSONL record (on by default; skip with `log=False`).
+
+Head interpretation:
+
+- **choice** — gated on `confidence` (the max probability).
+- **noul** — the 0–1 answer is the probability of "true"; gateable certainty is `max(p, 1 − p)`, so a confident "no" clears the floor the same as a confident "yes". An explicit `confidence` field (Decide-shaped nouls) wins over the derived certainty. A bool noul (`True`/`False`) has no gateable number and isn't floored; `noul: null` is a decline and escalates.
+- **score** — the numeric answer rides the ordered scale (may land between levels); gated on its `confidence`.
 
 <add-when-implemented>
 - Multi-label semantics (all selected labels must clear the floor independently)
-- Score head interpretation (numeric scale, legend display)
-- noul head interpretation (boolean; `False` is a real answer, not a decline)
 </add-when-implemented>
 
 ---
@@ -46,10 +50,11 @@ This is the user-flow contract — what the system does from a caller's perspect
 ## 2. Cascade Classification
 
 - `cascade_classify(provider_chain, task, text)` walks providers in order.
-- Stops at the first provider where **every head** has a real label/noul/score AND confidence ≥ floor.
+- Stops at the first provider where **every head** has a real label/noul/score AND its confidence clears the head's floor. Noul answers clear on the derived certainty `max(p, 1 − p)`; a noul with an explicit `confidence` clears on that — same rule as `interpret()`.
+- The floor per head resolves through the same ladder as `interpret()` (§3): per-provider config key > `head.floor` > explicit `confidence_floor` argument > task > global > provider default.
 - If nothing clears, returns the last provider that did return answers.
 - `providers_used` records every provider consulted.
-- Winner's answers drive the verdict via `interpret()`.
+- Winner's answers drive the verdict via `interpret()` (same floors, so walk and verdict can't disagree).
 
 <add-when-implemented>
 - Per-task provider chain defaults
@@ -64,6 +69,16 @@ This is the user-flow contract — what the system does from a caller's perspect
 - `escalate` → exit 1 (warn)
 - `block_on_classification=True` + escalated → exit 2 (block)
 - `final_exit_code()` is the policy function; the CLI `classify` subcommand maps verdict → exit code.
+
+Floor precedence ladder (highest wins), resolved per head by `gating.effective_floor`:
+
+1. per-provider config key `{pid}_confidence_floor` (the cross-provider knob)
+2. head `floor` (per-head; set in code via the `make_*` factories or in a task file)
+3. explicit `confidence_floor` argument / `Task.confidence_floor`
+4. global `classify.confidence_floor`
+5. built-in `_DEFAULT_FLOORS[pid]`
+
+A head floor scalar applies in the **serving provider's own** confidence semantics (Jev concentration vs Decide max-prob) — never reuse one number across providers expecting equivalence. Noul answers gate on the derived certainty (§1). Summary lines mark derived confidences as `(conf … derived)`. Full rule reference: [`docs/features/gating-and-recipes.md`](docs/features/gating-and-recipes.md).
 
 <add-when-implemented>
 - Block-mode hook examples (pre-commit returning 2, CI gating)

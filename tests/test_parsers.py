@@ -82,8 +82,11 @@ class TestParseJev:
         assert parsed["diff_type"]["label"] == "fix"
         assert parsed["diff_type"]["confidence"] == 0.78
         assert parsed["diff_type"]["probabilities"]["fix"] == 0.62
-        assert parsed["breaking_change"]["noul"] is False
-        assert parsed["breaking_change"]["confidence"] == 0.92
+        # Jev noul answers carry no confidence field: the 0-1 output IS the
+        # probability of "true" (docs.typesafe.ai/api). Do not gate on
+        # answer.confidence for noul — gating.answer_confidence derives it.
+        assert parsed["breaking_change"]["noul"] == 0.08
+        assert parsed["breaking_change"]["confidence"] is None
 
     def test_chat_completions_wrapper(self):
         inner = {"answers": {"diff_type": {"type": "choice", "choice": "docs", "confidence": 0.7}}}
@@ -91,6 +94,31 @@ class TestParseJev:
         heads = [sys1.heads_for("change", "jev")[0]]
         parsed = sys1.parsers.parse_jev(resp, heads)
         assert parsed["diff_type"]["label"] == "docs"
+
+    def test_score_answer_with_legend(self):
+        resp = {
+            "answers": {
+                "frustration": {
+                    "type": "score",
+                    "score": 2.4,
+                    "legend": {"1": "Calm", "2": "Frustrated", "3": "Very angry"},
+                    "probabilities": {"1": 0.1, "2": 0.6, "3": 0.3},
+                    "confidence": 0.62,
+                }
+            }
+        }
+        head = sys1.make_score(
+            "How frustrated does the author appear?",
+            score_min=1,
+            score_max=3,
+            legend=["Calm", "Frustrated", "Very angry"],
+            id="frustration",
+        )
+        parsed = sys1.parsers.parse_jev(resp, [head])
+        # score answers can land between levels and carry the legend map
+        assert parsed["frustration"]["score"] == 2.4
+        assert parsed["frustration"]["legend"]["2"] == "Frustrated"
+        assert parsed["frustration"]["confidence"] == 0.62
 
     def test_missing_head_declined(self):
         resp = {"answers": {"diff_type": {"type": "choice", "choice": "fix", "confidence": 0.7}}}

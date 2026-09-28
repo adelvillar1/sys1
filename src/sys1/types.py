@@ -35,6 +35,9 @@ class Head:
       - Jev: `task` → `instructions`, `descriptions` → `criteria`,
         `kind` → `type`. Jev supports per-option descriptions; Decide accepts
         flat labels only (descriptions ignored on hosted Decide).
+      - `floor` (optional) raises this head's confidence floor above the
+        task/global layer — see `gating.effective_floor` for the precedence
+        ladder. Expressed in the serving provider's own confidence semantics.
     """
 
     id: str
@@ -46,6 +49,7 @@ class Head:
     score_min: int = 1
     score_max: int = 5
     metadata: dict[str, Any] = field(default_factory=dict)
+    floor: float | None = None  # per-head confidence floor override; see gating.effective_floor
 
     def to_decide_head(self) -> dict:
         return {"task": self.task, "labels": list(self.labels), "multi_label": self.multi_label}
@@ -55,17 +59,31 @@ class Head:
         return self.to_decide_head()
 
     def to_jev_head(self) -> dict:
-        criteria = self.descriptions or {l: f"{l}" for l in self.labels}
-        head: dict[str, Any] = {
+        if self.kind == "score":
+            # Jev score criteria is an ordered array of level descriptions
+            # (2-10 levels, index 0 = lowest) - verified against
+            # docs.typesafe.ai/api and the ScoreCriteria SDK tuple type.
+            # It is NOT a label->description map, and there is no min/max on
+            # the wire: the levels are the array positions.
+            criteria: Any = self._score_criteria()
+        else:
+            # Jev choice/noul criteria is a label->rubric map; Decide accepts
+            # flat labels only.
+            criteria = self.descriptions or {label_str: label_str for label_str in self.labels}
+        return {
             "id": self.id,
             "type": self.kind,
             "instructions": self.task,
             "criteria": criteria,
         }
-        if self.kind == "score":
-            head["min"] = self.score_min
-            head["max"] = self.score_max
-        return head
+
+    def _score_criteria(self) -> list:
+        labels = self.labels
+        if all(label_str.isdigit() for label_str in labels):
+            labels = sorted(labels, key=int)
+        if self.descriptions:
+            return [self.descriptions.get(label_str, label_str) for label_str in labels]
+        return list(labels)
 
     def wire_head_for(self, provider: str) -> dict:
         if provider in ("local", "modernbert"):
@@ -82,6 +100,7 @@ def make_choice(
     id: str | None = None,
     descriptions: dict[str, str] | None = None,
     multi_label: bool = False,
+    floor: float | None = None,
     **meta: Any,
 ) -> Head:
     return Head(
@@ -92,6 +111,7 @@ def make_choice(
         descriptions=descriptions,
         multi_label=multi_label,
         metadata=meta,
+        floor=floor,
     )
 
 
@@ -102,6 +122,7 @@ def make_noul(
     yes_label: str = "yes",
     no_label: str = "no",
     descriptions: dict[str, str] | None = None,
+    floor: float | None = None,
     **meta: Any,
 ) -> Head:
     labels = [yes_label, no_label]
@@ -112,6 +133,7 @@ def make_noul(
         labels=labels,
         descriptions=descriptions or {yes_label: f"Yes, {task.lower()}", no_label: "No."},
         metadata={**meta, "yes": yes_label, "no": no_label},
+        floor=floor,
     )
 
 
@@ -122,10 +144,13 @@ def make_score(
     score_min: int = 1,
     score_max: int = 5,
     legend: list[str] | None = None,
+    floor: float | None = None,
     **meta: Any,
 ) -> Head:
-    # Jev score answers use an integer in [min, max]; labels are the scale
-    # integers rendered as strings so provider conversion is uniform.
+    # Levels rendered as string labels so provider conversion is uniform
+    # across wires. A Jev score answer is a probability-weighted position on
+    # the scale and can land between levels (a float); Decide-style
+    # providers pick one of these labels.
     labels = [str(i) for i in range(score_min, score_max + 1)]
     descriptions = None
     if legend:
@@ -139,6 +164,7 @@ def make_score(
         score_min=score_min,
         score_max=score_max,
         metadata=meta,
+        floor=floor,
     )
 
 
@@ -167,8 +193,8 @@ class Task:
 # mirroring the existing shapes so the JSONL log + dashboards keep working:
 #
 #   {"label": "...", "confidence": 0.83, "probabilities": {...}, "type": "choice"}
-#   {"noul": true,   "confidence": 0.91, "type": "noul"}
-#   {"score": 3,     "confidence": 0.77, "legend": "...", "type": "score"}
+#   {"noul": 0.95,  "type": "noul"}   # Jev: no confidence field - p IS the certainty
+#   {"score": 3.4,   "confidence": 0.77, "legend": {"3": "level-3 rubric"}, "type": "score"}
 #   {"_raw": "<unparsed>"}
 #
 # A missing head (provider returned no answer for it) becomes a `declined`

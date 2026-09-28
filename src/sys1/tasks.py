@@ -535,8 +535,14 @@ def load_tasks_file(path: str | Path) -> list[Task]:
 
 def _head_from_spec(spec: dict) -> Head:
     kind = spec.get("kind", "choice")
+    floor = spec.get("floor")
     if kind == "noul":
-        return make_noul(spec["task"], id=spec.get("id"), descriptions=spec.get("descriptions"))
+        return make_noul(
+            spec["task"],
+            id=spec.get("id"),
+            descriptions=spec.get("descriptions"),
+            floor=floor,
+        )
     if kind == "score":
         from .types import make_score
 
@@ -546,6 +552,7 @@ def _head_from_spec(spec: dict) -> Head:
             score_min=spec.get("score_min", 1),
             score_max=spec.get("score_max", 5),
             legend=spec.get("legend"),
+            floor=floor,
         )
     return make_choice(
         spec["task"],
@@ -553,4 +560,5 @@ def _head_from_spec(spec: dict) -> Head:
         id=spec.get("id"),
         descriptions=spec.get("descriptions"),
         multi_label=spec.get("multi_label", False),
+        floor=floor,
     )

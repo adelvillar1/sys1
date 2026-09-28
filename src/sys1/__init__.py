@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from .api import cascade_classify, classify, health_report
 from .config import DEFAULTS, api_key_for, load_config, state_file_path, write_state_flags
-from .gating import final_exit_code, interpret
+from .gating import answer_confidence, effective_floor, final_exit_code, interpret
 from .providers import (
     REGISTRY,
     availability_reason,
@@ -123,6 +123,8 @@ __all__ = [
     # gating
     "interpret",
     "final_exit_code",
+    "answer_confidence",
+    "effective_floor",
     # telemetry
     "log_record",
     "sanitize_for_log",

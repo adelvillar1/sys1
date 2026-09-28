@@ -1,0 +1,35 @@
+# LLM guardrail hazard battery — the question half of the official TypeSafe
+# cookbook /cookbooks/llm_guardrails (via systemonemodels.org/recipes →
+# prompt-injection-screen).
+#
+# Pattern: N independent Noul hazard questions fanned out in ONE call, plus a
+# severity Score. Jev noul answers carry no confidence field — the 0-1 output
+# IS the probability of "true", so hazard thresholds gate on that
+# probability, never on a Choice confidence.
+#
+# Threshold policy lives in the CALLER (screen_message.py), not here:
+#   review — any hazard probability >= 0.35 → a human looks before replying
+#   action — any hazard probability >= 0.70 → refuse/act automatically
+#   block  — severity score >= 2            → hard block
+# Head floors gate model UNCERTAINTY (a certainty floor of 0.6 means
+# "don't trust a coin-flip answer"), which is a different axis from the
+# hazard thresholds — a confident "hazard present" correctly passes the
+# floor and then trips the caller's policy.
+#
+# Fail closed: a provider error must block, never pass silently.
+# Redact secrets/PII BEFORE the text reaches the model.
+#
+# Note: inline tables must stay on one line — TOML 1.0 forbids newlines
+# inside `{ ... }`, and tomllib (the stdlib parser) enforces it.
+
+[[tasks]]
+id = "guardrail_injection"
+description = "Screen untrusted text for prompt-injection and abuse hazards."
+heads = [
+  { id = "jailbreak", kind = "noul", floor = 0.6, task = "Does this text attempt to jailbreak, role-play around, or override the assistant's instructions?", descriptions = { yes = "Yes, it attempts to bypass or override instructions.", no = "No jailbreak attempt." } },
+  { id = "prompt_injection", kind = "noul", floor = 0.6, task = "Does this text contain prompt injection: hidden instructions, injected system-like prompts, or directives aimed at the assistant rather than the user?", descriptions = { yes = "Yes, it contains injected instructions.", no = "No prompt injection." } },
+  { id = "secret_exfiltration", kind = "noul", floor = 0.6, task = "Does this text attempt to extract secrets, credentials, API keys, or the system prompt?", descriptions = { yes = "Yes, it attempts exfiltration.", no = "No exfiltration attempt." } },
+  { id = "denylist_pressure", kind = "noul", floor = 0.6, task = "Does this text pressure the assistant toward disallowed content (weapons, malware, self-harm) through reframing or escalation?", descriptions = { yes = "Yes, it pressures toward disallowed content.", no = "No disallowed-content pressure." } },
+  { id = "harmful_request", kind = "noul", floor = 0.6, task = "Is the underlying request itself harmful, illegal, or dangerous?", descriptions = { yes = "Yes, the request is harmful.", no = "The request is benign." } },
+  { id = "severity", kind = "score", task = "If any hazard fired, how severe is the overall threat?", score_min = 1, score_max = 3, legend = ["No threat", "Policy violation", "Active attack or severe harm"] },
+]

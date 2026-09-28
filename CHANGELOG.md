@@ -7,6 +7,36 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.2.0] — 2026-09-27
 
 Provider flags + control dashboard: candidate System One models wired and
+ready, enable/disable without touching code. Also (same branch, merged
+after the 0.2.0 cut): the noul gating fix, per-head floors, and the
+recipe pack below.
+
+### Fixed
+- **Noul answers are now gated.** A Jev noul answer carries no
+  `confidence` field — the 0–1 output *is* the probability of "true".
+  `interpret()` and `cascade_classify()` floor a head only when its
+  `confidence` field exists, so noul-gated tasks served by Jev returned
+  `pass` on any non-declined answer while Decide-shaped nouls (which
+  arrive as `{label, confidence}`) gated normally — same head, opposite
+  behavior per provider. `gating.answer_confidence()` derives the
+  floor-comparable certainty `max(p, 1 − p)`; an explicit `confidence`
+  on an answer still wins, so Decide-shaped nouls are unchanged.
+  Bool nouls keep today's behavior (nothing to derive). Note: this
+  intentionally changes verdicts for Jev-served noul tasks
+  (`dev-decisions`' `safety` task is the loudest case);
+  `block_on_classification` stays opt-in.
+- **`floors_for()` applies the effective task/global floor to custom
+  providers**, which previously fell through to the global default —
+  the cause of cascade/`interpret()` disagreement for non-core ids.
+
+### Added
+- **Provider flags** — `providers.enabled` / `providers.disabled` accept
+  `core`, `all` / `*`, `optin` / `candidates`, or explicit ids (env:
+  `SYS1_PROVIDERS__ENABLED`). `enabled_set()` gates `call_provider`,
+  `is_available`, and the API fan-out; a disabled provider fails with the
+  exact fix-it hint instead of a bare "unavailable".
+
+Provider flags + control dashboard: candidate System One models wired and
 ready, enable/disable without touching code.
 
 ### Added
@@ -49,6 +79,35 @@ ready, enable/disable without touching code.
 - **Tests** — flag resolution, disabled-gate errors, state-file
   round-trip/priority/corruption, candidate reporting, probes, dashboard
   endpoints, auth boundaries, and the page itself (suite now 126 tests).
+
+### Added (2026-09-28 — same branch, after the 0.2.0 cut)
+- **Per-head confidence floors** — `Head.floor: float | None` plus a
+  `floor=` parameter on `make_choice` / `make_noul` / `make_score` and
+  the TOML/JSON task loader. Precedence ladder (`gating.effective_floor`):
+  per-provider `{pid}_confidence_floor` config key > `head.floor` >
+  task `confidence_floor` > global > built-in provider default. Both
+  `interpret()` and `cascade_classify()` resolve floors through the same
+  helpers, so walk and verdict can't drift.
+- **Recipe pack** (`examples/`) — five recipes ported from the TypeSafe
+  cookbook patterns: guardrail hazard battery (5 nouls + severity
+  score, caller-side review/action/block tiers, fails closed), citation
+  check (noul `floor = 0.85` + strength score), composite lead scoring,
+  passage re-rank (one fan-out call, return-nothing-if-weak), and a
+  taxonomy walk (per-level choice head with a weak-edge floor bail).
+  Each ships as a sourced task file plus a short script; all are
+  smoke-tested offline in `tests/test_recipe_pack.py`.
+- **`examples/custom-task.toml` now parses** (pre-existing breakage:
+  multi-line TOML inline tables, and `provider_heads` written as a dict
+  where the loader takes a list).
+
+### Changed (2026-09-28)
+- `tests/fixtures/jev_sample.json` noul answers are docs-accurate — no
+  `confidence` key (it never existed on the wire); `test_sdk_shape`
+  asserts the real shape.
+- Test suite: 126 → 188 tests; new `tests/test_recipe_pack.py`.
+- Docs: new `docs/features/gating-and-recipes.md`; noul gating and the
+  floor precedence ladder added to TECHNICAL-DOCUMENTATION §5 and
+  FUNCTIONAL-SPECIFICATIONS §1/§2/§3.
 
 ## [0.1.0] — 2026-09-27
 

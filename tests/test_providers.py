@@ -245,6 +245,52 @@ class TestJevProvider:
             os.environ.pop("TYPESAFE_API_KEY", None)
 
 
+class TestJevHeadWiring:
+    """head.to_jev_head() matches the verified /v1/systemone request shapes."""
+
+    def test_score_criteria_is_ordered_array(self):
+        head = sys1.make_score(
+            "How frustrated does the author appear?",
+            score_min=1,
+            score_max=3,
+            legend=["Calm", "Frustrated", "Very angry"],
+            id="frustration",
+        )
+        wire = head.to_jev_head()
+        assert wire["type"] == "score"
+        # score criteria is an ordered array of level descriptions — not a
+        # label→description map — and there is no min/max on the wire
+        assert wire["criteria"] == ["Calm", "Frustrated", "Very angry"]
+        assert "min" not in wire
+        assert "max" not in wire
+
+    def test_score_criteria_without_legend(self):
+        head = sys1.make_score("Rate severity.", id="severity")
+        wire = head.to_jev_head()
+        assert wire["criteria"] == ["1", "2", "3", "4", "5"]
+
+    def test_score_labels_sorted_by_level(self):
+        head = sys1.Head(
+            id="s",
+            kind="score",
+            task="Rate it.",
+            labels=["3", "1", "2"],
+            descriptions={"1": "low", "2": "mid", "3": "high"},
+        )
+        assert head.to_jev_head()["criteria"] == ["low", "mid", "high"]
+
+    def test_choice_criteria_is_a_label_map(self):
+        head = sys1.make_choice(
+            "Which team should handle this?",
+            ["billing", "technical"],
+            descriptions={"billing": "Payments and refunds", "technical": "Bugs"},
+            id="department",
+        )
+        wire = head.to_jev_head()
+        assert wire["criteria"] == {"billing": "Payments and refunds", "technical": "Bugs"}
+        assert wire["instructions"] == "Which team should handle this?"
+
+
 # ── local provider: subprocess ───────────────────────────────────────────────
 
 

@@ -106,6 +106,24 @@ max-prob and a "0.7 Jev confidence" on a 5-way choice means something
 different than "0.7 Decide confidence." Tune them separately via
 `cfg["classify"]["jev_confidence_floor"]` and `…["decide_confidence_floor"]`.
 
+Noul answers are the exception: a Jev noul (`{"noul": 0.95}`) carries **no
+confidence field** — the 0–1 output is the probability of "true", so sys1
+gates it on `max(p, 1 − p)` (a confident "no" clears the floor, a coin
+flip escalates). An explicit `confidence` on an answer — Decide-shaped
+nouls arrive as `{label, confidence}` — always wins over the derived value.
+Floors apply per head (`head.floor`), per task, per provider (config key),
+or globally, in that order of precedence — see
+[`docs/features/gating-and-recipes.md`](docs/features/gating-and-recipes.md).
+
+### Jev usage notes
+
+One `/v1/systemone` request carries every head — `classify()` already fans
+out. Score heads send criteria as an ordered array of level descriptions
+(2–10 levels) and come back with a `legend` map. Before designing tasks,
+read the official patterns (fan-out, confidence routing, LLM guardrails, SDE
+cascade) — primitive shapes and links: [TECHNICAL-DOCUMENTATION.md §5](TECHNICAL-DOCUMENTATION.md),
+vendor docs at https://docs.typesafe.ai/.
+
 ---
 
 ## Install
@@ -129,7 +147,7 @@ uvicorn service.main:app --host 0.0.0.0 --port 8400
 git clone https://github.com/adelvillar1/sys1.git
 cd sys1
 uv sync --all-extras
-uv run pytest                   # 126 tests
+uv run pytest                   # 188 tests
 uv run sys1 doctor              # provider availability check
 uv run sys1 providers           # registry: core + candidates, flag/config/health
 ```
@@ -161,7 +179,7 @@ cascade = sys1.cascade_classify(["decide", "jev"], "issue_triage", issue_body)
 id = "security_review"
 description = "Flag diffs that touch auth, PII, or crypto."
 heads = [
-  { id = "touches_auth", kind = "noul", task = "Does this diff change auth, sessions, or token handling?" },
+  { id = "touches_auth", kind = "noul", floor = 0.85, task = "Does this diff change auth, sessions, or token handling?" },
   { id = "touches_pii",  kind = "noul", task = "Does this diff read, write, or transmit personally-identifiable data?" },
   { id = "severity",     kind = "choice", task = "If flagged, severity?", labels = ["low", "medium", "high"] },
 ]
@@ -171,6 +189,9 @@ heads = [
 sys1.load_tasks_file("tasks.example.toml")
 result = sys1.classify("decide", "security_review", diff_text)
 ```
+
+`floor` on a head sets that head's uncertainty floor (here: 0.85 for the
+high-stakes auth question); TOML head specs must stay on one line.
 
 ### Custom provider
 
@@ -190,6 +211,25 @@ register(Provider(
 
 result = sys1.classify("mine", "change", text)
 ```
+
+---
+
+## Recipe pack (examples)
+
+`examples/` ships working patterns ported from the TypeSafe cookbooks
+(details, sources, and run instructions in [`examples/README.md`](examples/README.md)):
+
+| Example | Shape | Use it when |
+|---|---|---|
+| `guardrail-injection.toml` + `screen_message.py` | 5 hazard nouls + severity score in one fan-out call | Screening untrusted input/output; policies stay in code (review ≥ 0.35, action ≥ 0.70, block ≥ 2.0) and fail closed |
+| `citation-check.toml` | noul "does the passage support the claim?" (`floor = 0.85`) + strength score | Verifying a claim against a quoted passage; below the high-stakes floor a human confirms |
+| `lead-scoring.py` | 4 composite score heads | Blending ordered per-signal ratings with explicit weights |
+| `rerank-passages.py` | N score heads in one call | Ranking passages (or any candidates); returns nothing when the best is weak |
+| `taxonomy-walk.py` | one choice head per taxonomy level | Hierarchical classification on a budget: one call per level, cumulative confidence, weak edges bail via `head.floor` |
+
+Every recipe runs against a live provider (`sys1 doctor` first) and is
+smoke-tested offline in `tests/test_recipe_pack.py` with a stub provider —
+no keys needed to check the wiring.
 
 ---
 
@@ -335,13 +375,13 @@ sys1/
 │   ├── telemetry.py     JSONL log, redaction, histogram, feedback, calibration
 │   ├── api.py           classify(), cascade_classify(), health_report()
 │   └── cli.py           sys1 classify / doctor / providers / tasks / version
-├── tests/               126 tests, recorded fixtures + mocked transports
+├── tests/               188 tests, recorded fixtures + mocked transports
 ├── service/
 │   ├── main.py          FastAPI wrapper (classify/cascade/health/tasks/calibration)
 │   ├── dashboard.py     control dashboard router + single-page app
 │   ├── pyproject.toml   service-specific deps
 │   └── Dockerfile       container build
-├── examples/            git-hook, pr-gate, custom-task recipes
+├── examples/            recipe pack: guardrail/citation task files + pattern scripts
 ├── pyproject.toml       package metadata + optional extras
 ├── README.md            (you're here)
 ├── CHANGELOG.md         version history

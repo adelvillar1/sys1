@@ -16,7 +16,7 @@ from typing import Any
 
 from . import providers as _providers
 from .config import load_config
-from .gating import interpret
+from .gating import answer_confidence, effective_floor, floors_for, interpret
 from .tasks import get_task, heads_for
 from .telemetry import confidence_histogram, log_record, sanitize_for_log
 from .types import Answer, ClassifyResult, Task
@@ -132,11 +132,21 @@ def cascade_classify(
     Defaults to `["decide", "jev"]` (cheap hosted first, strong hosted second).
     The first provider should be one whose confidence is well-calibrated for
     the task at hand — see gating.py for the per-provider floor notes.
+
+    Floors: the explicit `confidence_floor` argument overrides the task's own
+    floor; below that the ladder matches `interpret()` — per-provider config
+    key > head `floor` > task > global > provider default. Noul answers with
+    no explicit confidence gate on the derived certainty (Jev's 0-1 output),
+    same as `interpret()`.
     """
     cfg = cfg or load_config()
     chain = provider_chain or ["decide", "jev"]
     resolved_task = _resolve_task(task)
-    floor = float(confidence_floor if confidence_floor is not None else cfg["classify"]["confidence_floor"])
+    # explicit arg > task floor; the rest of the ladder resolves per head below
+    floors = floors_for(
+        cfg,
+        task_floor=confidence_floor if confidence_floor is not None else resolved_task.confidence_floor,
+    )
 
     t0 = time.monotonic()
     answers: dict[str, dict[str, Answer]] = {}
@@ -158,14 +168,21 @@ def cascade_classify(
             telemetry[pid] = {"error": str(e)[:300], "error_kind": "provider"}
             continue
 
-        # did every head clear the floor on this provider?
+        # did every head clear its floor on this provider?
         # Skip meta keys (_unmatched:*, _raw, etc.) — they aren't heads.
         real_answers = {k: v for k, v in prov_answers.items() if not k.startswith("_")}
-        conf_ok = all(
-            float(a.get("confidence") or 0) >= floor
-            for a in real_answers.values()
-            if isinstance(a, dict)
-        )
+        head_by_id = {h.id: h for h in head_list}
+        conf_ok = True
+        for head_id, a in real_answers.items():
+            if not isinstance(a, dict):
+                continue
+            conf = answer_confidence(a)
+            floor = effective_floor(cfg, floors, pid, head_by_id.get(head_id))
+            # no gateable confidence (e.g. a bool noul with no explicit
+            # confidence) cannot demonstrate the head cleared its floor
+            if conf is None or conf < floor:
+                conf_ok = False
+                break
         labels_ok = all(
             (a.get("label") is not None or a.get("score") is not None or a.get("noul") is not None)
             for a in real_answers.values()
@@ -190,6 +207,7 @@ def cascade_classify(
             cfg,
             heads=heads_for(resolved_task, verdict_provider),
             task=resolved_task,
+            floor_override=confidence_floor,
         )
     else:
         verdict, escalated, summary = "error", True, ["cascade: no provider succeeded"]
