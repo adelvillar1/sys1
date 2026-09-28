@@ -170,10 +170,21 @@ def _call_dd(dd_mod, provider: str, diff: str, task: str, cfg: dict) -> dict:
 def _compare(provider: str, dd: dict, sys1_a: dict, sys1_heads: list, divergences: list[str]) -> None:
     """Match dev-decisions' task[:40]-keyed answers against sys1's head.id-keyed answers.
 
-    The two systems agree on (label, confidence) per head. They differ in the
-    key naming: dev-decisions keys by `task[:40]`; sys1 keys by `head.id`. This
-    function uses the sys1 head list to bridge the two so the values can be
-    compared.
+    The two systems must agree on the DECISION (label) and answer shape per
+    head. They differ in the key naming: dev-decisions keys by `task[:40]`;
+    sys1 keys by `head.id`. This function uses the sys1 head list to bridge
+    the two so the values can be compared.
+
+    Confidence parity is strict for hosted providers. For `local` it is
+    informational (2026-09-28 fastino adoption): the classification schema's
+    task NAME is part of the model input, and the two implementations name
+    tasks differently (sys1: head id; dev-decisions' degraded inline path:
+    task text) — same labels, slightly different confidences. Measured:
+    diff_type 0.3884 (task text) vs 0.3949 (head id) on the same text.
+
+    Noul heads: sys1's prescribed shape carries the yes-probability with no
+    label; dev-decisions carries label yes/no + confidence. Compared via
+    probability/label consistency.
     """
     head_by_id = {h.id: h for h in sys1_heads}
     # dev-decisions keys are task[:40]; build a prefix → entry index once
@@ -197,13 +208,35 @@ def _compare(provider: str, dd: dict, sys1_a: dict, sys1_heads: list, divergence
             divergences.append(f"{provider}: head {head_id!r} has no dev-decisions counterpart")
             continue
         dd_label = dd_entry.get("label") or dd_entry.get("score") or dd_entry.get("noul")
-        sys1_label = sys1_entry.get("label") or sys1_entry.get("score") or sys1_entry.get("noul")
         dd_conf = dd_entry.get("confidence")
+
+        if sys1_entry.get("type") == "noul" and sys1_entry.get("label") is None:
+            # prescribed noul shape: probability of "true", no confidence field
+            p = sys1_entry.get("noul")
+            if not isinstance(p, (int, float)) or isinstance(p, bool):
+                divergences.append(f"{provider}: {head_id} sys1 noul has no gateable probability")
+                continue
+            if dd_label == "yes" and float(p) < 0.5:
+                divergences.append(f"{provider}: {head_id} label yes but sys1 p={p:.3f}")
+            elif dd_label == "no" and float(p) >= 0.5:
+                divergences.append(f"{provider}: {head_id} label no but sys1 p={p:.3f}")
+            else:
+                print(f"  ✓ {provider}: {head_id} → {dd_label!r} (sys1 p={p:.3f})")
+            continue
+
+        sys1_label = sys1_entry.get("label") or sys1_entry.get("score") or sys1_entry.get("noul")
         sys1_conf = sys1_entry.get("confidence")
         if str(dd_label) != str(sys1_label):
             divergences.append(f"{provider}: {head_id} label dev-decisions={dd_label!r} vs sys1={sys1_label!r}")
         elif dd_conf is not None and sys1_conf is not None and abs(float(dd_conf) - float(sys1_conf)) > 1e-3:
-            divergences.append(f"{provider}: {head_id} conf dev-decisions={dd_conf} vs sys1={sys1_conf}")
+            if provider == "local":
+                # expected post fastino-adoption — see _compare docstring
+                print(
+                    f"  ~ {provider}: {head_id} conf dev-decisions={float(dd_conf):.4f} "
+                    f"vs sys1={float(sys1_conf):.4f} (schema task names differ; labels agree)"
+                )
+            else:
+                divergences.append(f"{provider}: {head_id} conf dev-decisions={dd_conf} vs sys1={sys1_conf}")
         else:
             print(f"  ✓ {provider}: {head_id} → {dd_label!r} (conf {sys1_conf})")
 
