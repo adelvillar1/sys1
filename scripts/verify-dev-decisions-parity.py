@@ -140,14 +140,21 @@ def _call_dd(dd_mod, provider: str, diff: str, task: str, cfg: dict) -> dict:
         key = dd_mod._env_key("decide")
         if not key:
             raise RuntimeError("FASTINO_API_KEY not set")
+        # Prompts MUST match sys1's _openai_wire exactly — the hosted model is
+        # prompt-sensitive, and comparing different wrappers measures the
+        # wrapper, not the wire (verified: the old wording shifted risk_tier
+        # conf 0.5044 vs 0.5076 and nulled diff_type).
         messages = [
-            {"role": "system", "content": "You are a precise change classifier."},
-            {"role": "user", "content": f"Review this git diff and classify it.\n\nDiff:\n{diff}"},
+            {"role": "system", "content": "You are a precise change classifier. Answer only with the requested labels."},
+            {"role": "user", "content": f"Review the following text and answer every question.\n\n{diff}"},
         ]
         resp = dd_mod._call_openai_compatible(
             pcfg["decide_api_url"], key, pcfg["decide_model"], messages, schema={"classifications": heads}
         )
-        return dd_mod._parse_decide_response(resp)
+        parsed = dd_mod._parse_decide_response(resp)
+        # JSON null answers (hosted decide declines) must survive as declined
+        # entries, or the compare reads them as missing counterparts
+        return {k: (v if isinstance(v, dict) else {"label": v}) for k, v in parsed.items()}
     if provider == "jev":
         key = dd_mod._env_key("jev")
         if not key:
