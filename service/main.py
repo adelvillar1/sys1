@@ -286,6 +286,10 @@ def feedback_endpoint(req: FeedbackRequest) -> JSONResponse:
         provider=req.provider,
         actual_label=req.actual_label,
         escalated=req.escalated,
+        # No cfg means record_feedback falls back to the library default and
+        # ignores the deployment's log_dir — the feedback rows then scatter
+        # away from the classify rows they join against by input_sha256.
+        cfg=sys1.load_config(),
     )
     return JSONResponse({"recorded": path is not None, "path": str(path) if path else None})
 

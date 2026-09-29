@@ -8,6 +8,7 @@ trip without making network calls.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -37,6 +38,9 @@ def _load_service_app():
 def service_module(tmp_path, monkeypatch):
     """Load service.main with a tmp log dir and no bearer token."""
     monkeypatch.setenv("SYS1_LOG_DIR", str(tmp_path / "logs"))
+    # The section-qualified override beats SYS1_LOG_DIR; drop it so the fixture
+    # actually controls where this service writes its JSONL.
+    monkeypatch.delenv("SYS1_CLASSIFY__LOG_DIR", raising=False)
     monkeypatch.delenv("SYS1_BEARER_TOKEN", raising=False)
     return _load_service_app()
 
@@ -147,7 +151,24 @@ class TestEndpoints:
             },
         )
         assert r.status_code == 200
-        assert r.json()["recorded"] is True
+        body = r.json()
+        assert body["recorded"] is True
+        # Regression: the row must land under the deployment's log dir
+        # (SYS1_LOG_DIR here, the mounted volume in production) — not the
+        # library default in $HOME, which is inside the container layer and
+        # therefore lost when the container is recreated.
+        assert str(tmp_path / "logs") in body["path"]
+        rows = [
+            json.loads(line)
+            for line in Path(body["path"]).read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        row = rows[-1]
+        assert row["op"] == "feedback"
+        assert row["input_sha256"] == "deadbeefcafebabe"
+        assert row["task"] == "change"
+        assert row["head_id"] == "diff_type"
+        assert row["predicted"] == "feat" and row["actual"] == "feat"
 
     def test_calibration_empty_log_ok(self, client, tmp_path, monkeypatch):
         # Point the service's cfg at an empty log dir so we exercise the

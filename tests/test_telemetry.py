@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import sys1
 from sys1.telemetry import (
     calibration_curve,
     confidence_histogram,
@@ -141,3 +142,51 @@ def test_calibration_curve():
     assert abs(by_lower[0.8]["accuracy"] - 2 / 3) < 1e-3
     assert by_lower[0.9]["count"] == 2
     assert by_lower[0.9]["accuracy"] == 1.0
+
+
+class TestLogDirEnvOverride:
+    """A deployed service must write its calibration set where the deployment
+    mounted it. `SYS1_LOG_DIR` is the name the Dockerfile, the service header
+    and FUNCTIONAL-SPECIFICATIONS.md all advertise; the generic
+    `SYS1_<SECTION>__<KEY>` loop cannot reach `classify.log_dir` under that
+    name, so config.load_config binds it explicitly."""
+
+    def _feedback(self, cfg):
+        return record_feedback(
+            input_sha256="ab" * 8,
+            task="scan_line_correctness",
+            head_id="h0_desc",
+            predicted_label="correct",
+            predicted_confidence=0.9,
+            provider="jev",
+            actual_label="correct",
+            escalated=False,
+            cfg=cfg,
+        )
+
+    def test_alias_sets_classify_log_dir(self, monkeypatch, tmp_path: Path):
+        monkeypatch.delenv("SYS1_CLASSIFY__LOG_DIR", raising=False)
+        monkeypatch.setenv("SYS1_LOG_DIR", str(tmp_path / "mounted"))
+        assert sys1.load_config()["classify"]["log_dir"] == str(tmp_path / "mounted")
+
+    def test_section_qualified_var_wins_over_alias(self, monkeypatch, tmp_path: Path):
+        monkeypatch.setenv("SYS1_LOG_DIR", str(tmp_path / "alias"))
+        monkeypatch.setenv("SYS1_CLASSIFY__LOG_DIR", str(tmp_path / "qualified"))
+        assert sys1.load_config()["classify"]["log_dir"] == str(tmp_path / "qualified")
+
+    def test_empty_qualified_value_does_not_suppress_alias(self, monkeypatch, tmp_path: Path):
+        # `-e SYS1_CLASSIFY__LOG_DIR=` (empty) is a deployment mistake, not a
+        # choice of log dir — the alias must still bind, not collapse to "".
+        monkeypatch.setenv("SYS1_LOG_DIR", str(tmp_path / "alias"))
+        monkeypatch.setenv("SYS1_CLASSIFY__LOG_DIR", "")
+        assert sys1.load_config()["classify"]["log_dir"] == str(tmp_path / "alias")
+
+    def test_feedback_row_lands_under_the_env_dir(self, monkeypatch, tmp_path: Path):
+        monkeypatch.delenv("SYS1_CLASSIFY__LOG_DIR", raising=False)
+        root = tmp_path / "volume"
+        monkeypatch.setenv("SYS1_LOG_DIR", str(root))
+        path = self._feedback(sys1.load_config())
+        assert path is not None
+        assert str(root) in str(path)
+        assert path.exists()
+        assert json.loads(path.read_text())["op"] == "feedback"

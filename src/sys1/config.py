@@ -148,6 +148,17 @@ def load_config(
         path = key[len(ENV_PREFIX) :].lower().split("__")
         _set_nested(cfg, path, _coerce(val))
 
+    # `SYS1_LOG_DIR` is the documented single-name override for the JSONL
+    # location (service/Dockerfile sets it, service/main.py's header and
+    # FUNCTIONAL-SPECIFICATIONS.md advertise it). The generic loop above can
+    # only map that name to a top-level `log_dir`, which nothing reads — so bind
+    # it to the section here. The section-qualified `SYS1_CLASSIFY__LOG_DIR` is
+    # more specific: the loop already applied it, and a non-empty one suppresses
+    # the alias.
+    alias_log_dir = os.environ.get(f"{ENV_PREFIX}LOG_DIR")
+    if alias_log_dir and not os.environ.get(f"{ENV_PREFIX}CLASSIFY__LOG_DIR"):
+        cfg["classify"]["log_dir"] = alias_log_dir
+
     # runtime flag state (written by the control dashboard) wins over TOML/env
     _apply_state_file(cfg)
 
