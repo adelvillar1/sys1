@@ -85,7 +85,7 @@ Providers are registered via `sys1.register(Provider(...))` into a global `REGIS
 | Wire | Providers | Request shape |
 |------|-----------|---------------|
 | `openai` | decide, tev1, kev, laya | `/v1/chat/completions` with `classifications` schema |
-| `jev` | jev, clm, openjev | `/v1/systemone` with `{state, questions}` |
+| `jev` | jev, drex, glide, clm, openjev | `/v1/systemone` with `{state, questions}` |
 | `gliner` | local, decide_1b, decide_multi | fastino-prescribed `gliner2.classification` API — classifier server or subprocess |
 
 Provider id note: **`decide` means the hosted wire** (api.fastino.ai); the Decide *model* is what the `local` provider runs. Hosted is off every consumer's default path — see `docs/plans/2026-09-28-fastino-decide-adoption.md`.
@@ -120,6 +120,40 @@ Wire rules that have bitten before:
 - `confidence` (choice/score only) is Jev's distribution-shape statistic, not the winning probability — see README "Confidence semantics". Gate noul on the `noul` value itself.
 - Output tokens are free: batch every independent question in one call. A second call is only for genuinely dependent questions (options or state that can't exist yet).
 - `noul` answers carry no `confidence` per the docs (fixture `jev_sample.json` is now docs-accurate). Gate noul on the value itself — see [Noul gating](#noul-gating) below.
+
+### Drex deltas (verified 2026-09-30 against drex.nace.ai/llms-full.txt)
+
+`drex` speaks the same `/v1/systemone` wire but diverges from Jev in four load-bearing ways, all handled inside `_drex_wire` / `to_drex_head()` / `parse_drex`:
+
+- **`state` is a plain string** (the documented canonical input), not `{"text": ...}` — and it is bounded by `providers.drex_max_chars` (default 400,000), *not* `scan.max_diff_chars`: the 131,072-token state window on `drex-v1.5` is the feature.
+- **Noul criteria keys**: Drex reads only `true`/`false` (other keys are ignored server-side); `to_drex_head()` maps `make_noul`'s yes/no descriptions onto those.
+- **Score is 0-indexed**: Drex returns `score = Σ index × probability` over the criteria array; `parse_drex` shifts by `head.score_min` and converts Drex's returned legend array into sys1's `{level: description}` dict.
+- **Usage keys**: `input_tokens`/`output_tokens` (no `total_tokens`) map onto `token_prompt`/`token_completion`/`token_total`; `evaluation_time_ms` and `request_id` ride along as telemetry extras.
+
+Heads: `heads_for(task, "drex")` inherits the `jev` head set wherever a task defines one (same primitives, same noul semantics). Retry policy matches Drex's guidance — 429/529/500 retryable via the standard backoff, 401/402/422 fail fast; client timeout should stay ≥60s (Drex waits up to 55s model-side). Model defaults to pinned `drex-v1.5`; `drex-latest` is the documented stable alias.
+
+### GLiDE deltas (probed live 2026-10-01 against docs.fastino.ai/concepts/decision-models)
+
+`glide` (Fastino, `fastino/glide`, ~free: $0 input / $0.04 per 1M output tokens) speaks the same `/v1/systemone` wire and reuses `to_drex_head()` verbatim — probed live: an extra `id` field per question or `yes`/`no` noul criteria keys return 422 `extra_forbidden`. Deltas handled inside `_glide_wire` / `parse_glide`:
+
+- **40,000-token rendered-prompt limit**: `state` is a plain string bounded by `providers.glide_max_chars` (default 100,000 ≈ headroom at ~2.5 chars/token) — long-context work belongs to Drex (131,072 tokens).
+- **Score is 0-indexed like Drex** (shifted by `head.score_min`), but `probabilities`/`legend` arrive as a dict keyed by index string (`"0".."N-1"`) — the legend keys shift directly where Drex sends a legend *array*. `expected_level` (Σ index × p) rides along as a calibration extra.
+- **Confidence is explicit on every answer kind** with documented formulas: noul `|2p−1|`, choice/score `top1−top2` margin. `parse_glide` **strips noul confidence** (on that scale p=0.85 scores 0.70 — stricter than the family's derived `max(p, 1-p)`) and keeps choice/score margins, which run systematically lower than Jev's concentration statistic (calibration 2026-10-01: glide agreed with jev 6/6 on diff_type labels, 5/6 on risk_tier; noul p tracked within ~0.05).
+- **Auth**: both `Authorization: Bearer` and `X-API-Key` accepted — `http_post_json` unmodified. `state` also accepts object/array forms; sys1 sends a plain string. Response echoes the model id with the vendor prefix stripped (`glide`).
+- **Usage keys**: `input_tokens`/`output_tokens` + a top-level `token_usage` int; no `evaluation_time_ms`/`request_id` on this wire. Latency is bimodal (1–8s observed, 17.5s tail) — well under the 30s timeout, but not the latency pick.
+
+Heads: `heads_for(task, "glide")` inherits the `jev` head set like drex. Needs `FASTINO_API_KEY` (repo `.env`).
+
+### Routing (cascade default chains)
+
+`routing.route(task, text, cfg)` is the deterministic policy that builds `cascade_classify`'s chain when none is passed explicitly. It is a policy function, not an adaptive router — decision calls are low-volume and near-free at the head of the chain; quality lives in floors and calibration, not model scoring.
+
+1. **Chain source**: `providers.route.by_task[task.id]` override, else `providers.route.default_chain` (default `glide,drex,jev` — hosted-only by design; `local`/`modernbert` are never auto-routed).
+2. **Size gate**: past `providers.route.long_input_chars` (default: `glide_max_chars`), providers whose documented bound cannot take the input (glide) move to the back — drex-first for long inputs.
+3. **Availability**: providers that are not enabled+usable right now drop out.
+4. **Task allow-list**: `Task.providers` (e.g. safety's) is a hard filter, preserving chain order.
+
+Explicit `provider_chain` arguments and `classify()` bypass routing entirely. The decision rides into the JSONL record as `route_chain` / `route_reason` (`default` | `task` | `long-input` | `availability-filtered` — added keys only). `providers.route.enabled = false` restores the legacy `["decide", "jev"]` default. See `docs/plans/2026-10-01-glide-provider-and-router.md`.
 
 ### Noul gating
 
@@ -176,7 +210,7 @@ Key sections: `scan`, `classify`, `providers`, `log`. Provider keys follow the p
 
 ## 8. Telemetry & Calibration
 
-JSONL log at `<log_dir>/YYYY/MM/DD/events.jsonl`. Each record carries `op` (`classify` or `feedback`), `input_sha256`, per-provider `answers` and `telemetry`, `verdict`, `escalated`, `latency_ms`, `confidence_histogram`.
+JSONL log at `<log_dir>/YYYY/MM/DD/events.jsonl`. Each record carries `op` (`classify` or `feedback`), `input_sha256`, per-provider `answers` and `telemetry`, `verdict`, `escalated`, `latency_ms`, `confidence_histogram`; cascade records additionally carry `cascade`, `chain`/`winner` and the routing decision `route_chain` / `route_reason` (see [Routing](#routing-cascade-default-chains)).
 
 Feedback joins via `input_sha256` (16-hex prefix). `calibration_curve()` produces per-bin predicted-vs-actual accuracy from feedback rows.
 

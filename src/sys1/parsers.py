@@ -118,6 +118,117 @@ def _jev_entry(head: Head, a: dict) -> Answer:
     return entry
 
 
+# ── Drex (/v1/systemone, nace.ai) ─────────────────────────────────────────────
+
+def parse_drex(resp: dict, heads: list[Head]) -> dict[str, Answer]:
+    """
+    Drex response — always the SDK shape `{"answers": {id: {...}}}` (chat-
+    completions wrapping tolerated for symmetry with parse_jev).
+
+    Per-kind deltas vs Jev (docs.nace.ai, llms-full.txt):
+      - choice: {type, choice, probabilities, confidence} — `choice` renames
+        to sys1's `label` (handled by _jev_entry).
+      - noul: {type, noul: p} — identical semantics (p IS the certainty; no
+        confidence field; gating derives max(p, 1-p)).
+      - score: Drex returns `score = Σ index x probability` over the 0-indexed
+        criteria array. sys1 scales run score_min..score_max, so the score is
+        shifted by head.score_min, and Drex's returned legend ARRAY becomes
+        sys1's {level: description} dict.
+    """
+    inner: Any = resp
+    if "choices" in inner and isinstance(inner["choices"], list) and inner["choices"]:
+        msg = (inner["choices"][0] or {}).get("message") or {}
+        content = msg.get("content")
+        if isinstance(content, str):
+            try:
+                inner = _maybe_json(content)
+            except Exception:
+                return {h.id: declined("bad-content") for h in heads}
+
+    answers = inner.get("answers") if isinstance(inner, dict) else None
+    if not isinstance(answers, dict):
+        return {h.id: declined("no-answers") for h in heads}
+
+    out: dict[str, Answer] = {}
+    for head in heads:
+        a = answers.get(head.id) or answers.get(head.task)
+        if not isinstance(a, dict):
+            out[head.id] = declined("missing")
+            continue
+        entry = _jev_entry(head, a)
+        if entry.get("type") == "score" and head.kind == "score":
+            score = entry.get("score")
+            if isinstance(score, (int, float)) and not isinstance(score, bool):
+                entry["score"] = float(head.score_min) + float(score)
+            legend = entry.get("legend")
+            if isinstance(legend, list):
+                entry["legend"] = {
+                    str(head.score_min + i): str(level) for i, level in enumerate(legend)
+                }
+        out[head.id] = entry
+    return out
+
+
+# ── GLiDE (fastino /v1/systemone) ─────────────────────────────────────────────
+
+def parse_glide(resp: dict, heads: list[Head]) -> dict[str, Answer]:
+    """
+    GLiDE response — the SDK shape `{"answers": {id: {...}}}` (chat-completions
+    wrapping tolerated for symmetry with parse_jev/parse_drex).
+
+    Per-kind deltas vs Drex (docs.fastino.ai/concepts/decision-models, probed
+    live 2026-10-01):
+      - choice: {type, choice, confidence, probabilities} — confidence is the
+        documented top1-top2 margin; kept as returned (same flavor as the
+        Jev family per gating.py's docstring).
+      - noul: {type, noul: p, confidence: |2p-1|} — the explicit confidence
+        is STRIPPED: on the |2p-1| scale a p=0.85 answer scores 0.70, which
+        would make the shared Jev-family floor stricter than jev/drex for the
+        same answer. Gating derives max(p, 1-p) instead (family-consistent).
+      - score: GLiDE is 0-indexed over the criteria array like Drex (score
+        shifted by head.score_min), but probabilities/legend arrive as a dict
+        keyed by index STRING ("0".."N-1") — the legend keys shift directly
+        (no array->dict conversion needed). `expected_level` (Σ index x p)
+        rides along as a calibration extra.
+    """
+    inner: Any = resp
+    if "choices" in inner and isinstance(inner["choices"], list) and inner["choices"]:
+        msg = (inner["choices"][0] or {}).get("message") or {}
+        content = msg.get("content")
+        if isinstance(content, str):
+            try:
+                inner = _maybe_json(content)
+            except Exception:
+                return {h.id: declined("bad-content") for h in heads}
+
+    answers = inner.get("answers") if isinstance(inner, dict) else None
+    if not isinstance(answers, dict):
+        return {h.id: declined("no-answers") for h in heads}
+
+    out: dict[str, Answer] = {}
+    for head in heads:
+        a = answers.get(head.id) or answers.get(head.task)
+        if not isinstance(a, dict):
+            out[head.id] = declined("missing")
+            continue
+        entry = _jev_entry(head, a)
+        if entry.get("type") == "score" and head.kind == "score":
+            score = entry.get("score")
+            if isinstance(score, (int, float)) and not isinstance(score, bool):
+                entry["score"] = float(head.score_min) + float(score)
+            legend = entry.get("legend")
+            if isinstance(legend, dict):
+                entry["legend"] = {
+                    str(head.score_min + int(k)): str(v) for k, v in legend.items()
+                }
+            if a.get("expected_level") is not None:
+                entry["expected_level"] = a["expected_level"]
+        if entry.get("type") == "noul":
+            entry.pop("confidence", None)
+        out[head.id] = entry
+    return out
+
+
 # ── Local GLiNER2 (subprocess wrapper) ────────────────────────────────────────
 
 def parse_local(parsed: dict, heads: list[Head]) -> dict[str, Answer]:

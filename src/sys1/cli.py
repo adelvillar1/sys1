@@ -50,7 +50,8 @@ def _cmd_classify(args: argparse.Namespace) -> int:
     if args.input == "-":
         text = _sys.stdin.read()
     else:
-        text = open(args.input, encoding="utf-8", errors="replace").read()
+        with open(args.input, encoding="utf-8", errors="replace") as f:
+            text = f.read()
     result = classify(args.provider, args.task, text, log=not args.no_log)
     if args.json:
         print(json.dumps(result.as_dict(), indent=2, default=str))

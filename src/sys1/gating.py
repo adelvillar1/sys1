@@ -37,6 +37,8 @@ _DEFAULT_FLOORS = {
     "local": 0.7,
     "modernbert": 0.55,  # fast but noisy, lower floor
     "jev": 0.7,
+    "drex": 0.7,  # Jev-family calibrated semantics; noul derives max(p, 1-p)
+    "glide": 0.7,  # Jev-family: parse_glide strips noul confidence (|2p-1| scale) so noul derives max(p, 1-p)
     # candidates — inherit their wire family's semantics
     "clm": 0.7,          # jev wire
     "openjev": 0.65,     # community reproduction, slightly less trusted

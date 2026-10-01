@@ -63,7 +63,7 @@ def sanitize_for_log(answers: dict[str, dict[str, Answer]], redact_fields: Itera
     """Deep-copy + strip anything that looks like raw text the user might not want logged."""
     safe = copy.deepcopy(answers)
     fields = tuple(redact_fields)
-    for prov, heads in safe.items():
+    for heads in safe.values():
         if not isinstance(heads, dict):
             continue
         for _head_id, entry in heads.items():
@@ -93,7 +93,7 @@ def confidence_histogram(answers: dict[str, dict[str, Answer]], *, bins: int = 1
                 continue
             if c != c:  # NaN
                 continue
-            idx = min(bins - 1, max(0, int(math.floor(c * bins))))
+            idx = min(bins - 1, max(0, math.floor(c * bins)))
             buckets[prov][idx] += 1
     return dict(buckets)
 

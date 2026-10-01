@@ -18,6 +18,7 @@ from typing import Any
 from . import providers as _providers
 from .config import load_config
 from .gating import answer_confidence, effective_floor, floors_for, interpret
+from .routing import route_decision
 from .tasks import get_task, heads_for
 from .telemetry import confidence_histogram, log_record, sanitize_for_log
 from .types import Answer, ClassifyResult, Task
@@ -130,7 +131,11 @@ def cascade_classify(
     what you get — the cascade records which ones were consulted in
     `providers_used`, and the per-provider telemetry in `telemetry`.
 
-    Defaults to `["decide", "jev"]` (cheap hosted first, strong hosted second).
+    Defaults to the routed chain (see routing.route): `glide,drex,jev` for
+    short inputs — glide first (cheap), drex ahead of it once the input
+    exceeds glide's bound, jev last. Explicit `provider_chain` arguments
+    bypass routing entirely. The route decision rides into the log record as
+    `route_chain` / `route_reason`.
     The first provider should be one whose confidence is well-calibrated for
     the task at hand — see gating.py for the per-provider floor notes.
 
@@ -141,8 +146,8 @@ def cascade_classify(
     same as `interpret()`.
     """
     cfg = cfg or load_config()
-    chain = provider_chain or ["decide", "jev"]
     resolved_task = _resolve_task(task)
+    chain, route_reason = _chain_for(resolved_task, text, cfg, provider_chain)
     # explicit arg > task floor; the rest of the ladder resolves per head below
     floors = floors_for(
         cfg,
@@ -225,7 +230,18 @@ def cascade_classify(
         summary=summary,
     )
     if log:
-        _log_classify(result, cfg, text, extra_log_fields={"cascade": True, "chain": chain, "winner": winner})
+        _log_classify(
+            result,
+            cfg,
+            text,
+            extra_log_fields={
+                "cascade": True,
+                "chain": chain,
+                "winner": winner,
+                "route_chain": chain,
+                "route_reason": route_reason,
+            },
+        )
     return result
 
 
@@ -354,6 +370,15 @@ def _resolve_task(task: str | Task) -> Task:
     if t is None:
         raise KeyError(f"unknown task {task!r}")
     return t
+
+
+def _chain_for(
+    task: Task, text: str, cfg: dict, provider_chain: list[str] | None
+) -> tuple[list[str], str]:
+    """The cascade's chain: explicit arguments bypass routing entirely."""
+    if provider_chain is not None:
+        return list(provider_chain), "explicit"
+    return route_decision(task, text, cfg)
 
 
 def _resolve_providers(spec: str | list[str], cfg: dict, task: Task) -> list[str]:

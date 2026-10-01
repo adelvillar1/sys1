@@ -26,7 +26,14 @@ from pathlib import Path
 from typing import Any
 
 from .config import api_key_for, load_config
-from .parsers import parse_decide, parse_gliner2, parse_jev, parse_modernbert
+from .parsers import (
+    parse_decide,
+    parse_drex,
+    parse_glide,
+    parse_gliner2,
+    parse_jev,
+    parse_modernbert,
+)
 from .types import Answer, Head, Provider
 
 # ── HTTP core (stdlib-only) ──────────────────────────────────────────────────
@@ -219,6 +226,114 @@ def _jev_wire(pid: str):
     return _fn
 
 
+def _drex_wire(pid: str):
+    """
+    Classify fn for Nace Drex — /v1/systemone shape with plain-string `state`.
+
+    Deltas vs _jev_wire (per https://drex.nace.ai/llms-full.txt):
+      - `state` is the text itself (the documented canonical input), bounded
+        by `drex_max_chars` — NOT scan.max_diff_chars; the 131,072-token
+        state window on drex-v1.5 is the reason this provider exists.
+      - questions go through Head.to_drex_head() (noul criteria under
+        `true`/`false` keys).
+      - usage maps input_tokens/output_tokens onto the contract telemetry
+        keys; evaluation_time_ms + request_id ride along as extras.
+    Retry policy matches Drex's guidance: 429/529/500 retry via
+    http_post_json's existing backoff; 401/402/422 fail fast.
+    """
+
+    def _fn(text: str, heads: list[Head], cfg: dict, telemetry: dict) -> dict[str, Answer]:
+        pcfg = cfg["providers"]
+        api_key = api_key_for(pid, cfg)
+        if _requires_key(pid, cfg) and not api_key:
+            raise RuntimeError(f"${pcfg.get(f'{pid}_api_key_env', pid.upper() + '_API_KEY')} not set")
+        url = pcfg.get(f"{pid}_api_url", "")
+        if not url:
+            raise RuntimeError(f"providers.{pid}_api_url not configured")
+        body = {
+            "model": pcfg.get(f"{pid}_model", pid),
+            "state": text[: pcfg.get("drex_max_chars", 400_000)],
+            "questions": {h.id: h.to_drex_head() for h in heads},
+        }
+        resp = http_post_json(
+            url,
+            body,
+            api_key=api_key,
+            timeout=pcfg["request_timeout_seconds"],
+            max_retries=pcfg["max_retries"],
+            backoff=pcfg["retry_backoff_seconds"],
+            telemetry=telemetry,
+            label=pid,
+        )
+        usage = resp.get("usage") or {}
+        if usage.get("input_tokens") is not None:
+            telemetry["token_prompt"] = usage.get("input_tokens")
+            telemetry["token_completion"] = usage.get("output_tokens")
+            telemetry["token_total"] = (usage.get("input_tokens") or 0) + (usage.get("output_tokens") or 0)
+        if resp.get("evaluation_time_ms") is not None:
+            telemetry["evaluation_time_ms"] = resp["evaluation_time_ms"]
+        if resp.get("request_id"):
+            telemetry["request_id"] = resp["request_id"]
+        if resp.get("model"):
+            telemetry["model"] = resp["model"]
+        return parse_drex(resp, heads)
+
+    return _fn
+
+
+def _glide_wire(pid: str):
+    """
+    Classify fn for Fastino GLiDE — /v1/systemone shape with plain-string
+    `state` (Drex-style; the vendor also accepts object/array state).
+
+    Deltas vs _drex_wire (docs.fastino.ai/concepts/decision-models, probed
+    live 2026-10-01):
+      - 40,000-token rendered-prompt limit -> state is bounded by
+        `glide_max_chars` (~headroom at ~2.5 chars/token), not drex's 400K.
+      - Strict validation like Drex: questions go through Head.to_drex_head()
+        (no `id` field; noul criteria under `true`/`false` — yes/no keys 422).
+      - Both `Authorization: Bearer` and `X-API-Key` are accepted, so
+        http_post_json's Bearer works unmodified.
+      - usage maps input_tokens/output_tokens onto the contract telemetry
+        keys (same as Drex); no evaluation_time_ms/request_id on this wire.
+      - the response echoes the model id with the provider prefix stripped
+        ("glide").
+    Retry policy matches http_post_json defaults: 429/5xx retry, 4xx fail fast.
+    """
+
+    def _fn(text: str, heads: list[Head], cfg: dict, telemetry: dict) -> dict[str, Answer]:
+        pcfg = cfg["providers"]
+        api_key = api_key_for(pid, cfg)
+        if _requires_key(pid, cfg) and not api_key:
+            raise RuntimeError(f"${pcfg.get(f'{pid}_api_key_env', pid.upper() + '_API_KEY')} not set")
+        url = pcfg.get(f"{pid}_api_url", "")
+        if not url:
+            raise RuntimeError(f"providers.{pid}_api_url not configured")
+        body = {
+            "model": pcfg.get(f"{pid}_model", pid),
+            "state": text[: pcfg.get("glide_max_chars", 100_000)],
+            "questions": {h.id: h.to_drex_head() for h in heads},
+        }
+        resp = http_post_json(
+            url,
+            body,
+            api_key=api_key,
+            timeout=pcfg["request_timeout_seconds"],
+            max_retries=pcfg["max_retries"],
+            backoff=pcfg["retry_backoff_seconds"],
+            telemetry=telemetry,
+            label=pid,
+        )
+        usage = resp.get("usage") or {}
+        if usage.get("input_tokens") is not None:
+            telemetry["token_prompt"] = usage.get("input_tokens")
+            telemetry["token_completion"] = usage.get("output_tokens")
+            telemetry["token_total"] = (usage.get("input_tokens") or 0) + (usage.get("output_tokens") or 0)
+        return parse_glide(resp, heads)
+
+    return _fn
+
+
 def _gliner_wire(pid: str, model_key: str = "local_model"):
     """
     Classify fn for GLiNER2-family models, using the fastino-prescribed API
@@ -358,7 +473,7 @@ def _requires_key(pid: str, cfg: dict) -> bool:
     explicit = pcfg.get(f"{pid}_requires_key")
     if explicit is not None:
         return bool(explicit)
-    if pid in ("decide", "jev"):
+    if pid in ("decide", "jev", "drex", "glide"):
         return True
     url = pcfg.get(f"{pid}_api_url", "")
     if url:
@@ -660,6 +775,35 @@ register(
         description="POST /v1/systemone with {state, questions}. Three primitives: choice, noul, score.",
         tier="core",
         wire="jev",
+    )
+)
+register(
+    Provider(
+        id="drex",
+        name="Nace Drex (hosted)",
+        classify=_drex_wire("drex"),
+        is_available=_hosted_available("drex"),
+        is_configured=_hosted_available("drex"),
+        description="Jev-class decision model on the /v1/systemone wire with a 131,072-token "
+        "state window (drex-v1.5). Plain-string state; noul/choice/score, calibrated probabilities.",
+        tier="core",
+        wire="jev",
+        meta={"setup": "set DREX_API_KEY (repo .env, gitignored); docs: drex.nace.ai/llms-full.txt"},
+    )
+)
+register(
+    Provider(
+        id="glide",
+        name="Fastino GLiDE (hosted)",
+        classify=_glide_wire("glide"),
+        is_available=_hosted_available("glide"),
+        is_configured=_hosted_available("glide"),
+        description="Fastino's Jev/Drex-class decision model on the /v1/systemone wire with a "
+        "40,000-token rendered-prompt limit. Plain-string state; noul/choice/score with "
+        "documented confidence formulas; ~free ($0 input / $0.04 per 1M output tokens).",
+        tier="core",
+        wire="jev",
+        meta={"setup": "set FASTINO_API_KEY (repo .env, gitignored); docs: docs.fastino.ai/concepts/decision-models"},
     )
 )
 register(

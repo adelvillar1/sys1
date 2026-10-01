@@ -33,10 +33,11 @@ and into a *decision contract* is the criteria.
 | Component | File | What it does |
 |-----------|------|--------------|
 | `classify()` | `api.py` | Top-level: resolve → call providers → interpret → log |
-| `cascade_classify()` | `api.py` | Walk a provider chain; stop at the first that clears |
+| `cascade_classify()` | `api.py` | Walk a provider chain; stop at the first that clears. Default chain is routed (`routing.route`: glide first for short inputs, drex ahead of it for long ones) |
 | `Head` / `Task` / `Answer` | `types.py` | Dataclasses: stable head ids, provider wire shapes |
-| `Provider` | `providers.py` | Pluggable registry: 4 core + 7 opt-in candidates |
-| `parse_decide` / `_jev` / `_local` / `_modernbert` | `parsers.py` | Wire-shape normalization to the shared Answer dict |
+| `Provider` | `providers.py` | Pluggable registry: 6 core + 7 opt-in candidates |
+| `route()` / `route_decision()` | `routing.py` | Deterministic default-chain policy for the cascade: per-task override, size gate, availability, task allow-list |
+| `parse_decide` / `_jev` / `_drex` / `_glide` / `_local` / `_modernbert` | `parsers.py` | Wire-shape normalization to the shared Answer dict |
 | `interpret()` | `gating.py` | Confidence floors → pass / escalate / block verdict |
 | `log_record()` | `telemetry.py` | JSONL log; redaction; calibration joins |
 | 8 pre-registered tasks | `tasks.py` | change, commit_audit, deps_risk, docs_drift, api_drift, pr_gate, issue_triage, safety |
@@ -55,6 +56,8 @@ dependencies; FastAPI is opt-in via `pip install 'sys1[service]'`.
 |----|---------|-----------|---------|
 | `decide` | Fastino hosted `GLiNER-2.5-Decide` (OpenAI-compatible chat-completions) | Fast, structured schema (`{"classifications": [...]}`), $0.03/$0 pricing on the docs / $0.15/$0.15 on the live catalog — verify before budgeting | Flat `labels` only, no per-option descriptions on hosted. HTTP 425 on cold models; retry with backoff. `constrained_classification` is gated to `multi-v1`, not hosted Decide. |
 | `jev` | TypeSafe hosted `Jev-1.13.0` (`/v1/systemone`) | Three primitives (choice / noul / score), per-option `criteria` descriptions, decision-quality scores on benchmarks (Decision Index 51.67 vs Decide's 9.98) | Higher latency than Decide. `confidence` is a distribution-shape statistic — do NOT threshold it on the same number as Decide. |
+| `drex` | Nace hosted `Drex` (`/v1/systemone`, Jev-class) | Same three primitives as Jev with a **131,072-token state window** (`drex-v1.5`) — long states without truncation. Calibrated probabilities; noul gates on `max(p, 1-p)` like Jev. Needs `DREX_API_KEY` (repo `.env`). | Score answers are 0-indexed on the wire (sys1 shifts by `score_min`); `confidence` is Jev-family — don't threshold it like Decide. |
+| `glide` | Fastino hosted `GLiDE` (`/v1/systemone`, Jev/Drex-class) | ~free ($0 input / $0.04 per 1M output tokens); documented confidence formulas; the cascade's routed default head for short inputs. Needs `FASTINO_API_KEY` (repo `.env`). | 40,000-token rendered-prompt limit — long states route to Drex. Score 0-indexed like Drex (sys1 shifts); noul confidence stripped so gating derives `max(p, 1-p)`; choice/score margins run lower than Jev's — tune `glide_confidence_floor` per task if needed. Bimodal latency (1–8s, 17.5s tail observed). |
 | `local` | `fastino/GLiNER2.5-Decide` via the prescribed `gliner2.classification` API (load-once classifier server, or venv subprocess) | No network, no cost, runs offline; one decode for all heads; full per-label probabilities | Needs the venv path (and, server-side, a long-lived process — see below) |
 | `modernbert` | `answerdotai/ModernBERT-base` sentence encoder (eval only, no fine-tuning) | Fast + cheap + a useful calibration comparison | Noisy; lower confidence floor (0.55 default) reflects that. Use for calibration, not for gates. |
 
@@ -121,7 +124,9 @@ The provider id **`decide` means the hosted Fastino wire** (api.fastino.ai) —
 a different serving path from the Decide *model*, which is what the `local`
 provider runs via the fastino-prescribed `gliner2.classification` API. The
 library's consumers (dev-decisions, zcode-router-kit) default to the local
-fastino path; hosted is available but not on anyone's default route.
+fastino path for single-provider classify. The cascade's *default chain* is
+hosted and routed (`glide,drex,jev` — see `routing.route`); `local` is never
+auto-routed. Disable routing with `providers.route.enabled = false`.
 
 ### Serving the local fastino wire
 

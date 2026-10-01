@@ -85,11 +85,41 @@ class Head:
             return [self.descriptions.get(label_str, label_str) for label_str in labels]
         return list(labels)
 
+    def to_drex_head(self) -> dict:
+        """
+        Drex (/v1/systemone) question shape. Same three kinds as Jev, with one
+        load-bearing delta: Drex's noul criteria reads ONLY `true`/`false`
+        keys (any other key is ignored server-side), so make_noul's yes/no
+        descriptions map onto those. choice criteria is the same
+        label→description map and score criteria the same ordered level array
+        as to_jev_head().
+        """
+        criteria: Any
+        if self.kind == "score":
+            criteria = self._score_criteria()
+        elif self.kind == "noul":
+            yes = str(self.metadata.get("yes", "yes"))
+            no = str(self.metadata.get("no", "no"))
+            descriptions = self.descriptions or {}
+            criteria = {
+                "true": descriptions.get(yes, f"Yes, {self.task.lower()}"),
+                "false": descriptions.get(no, "No."),
+            }
+        else:
+            criteria = self.descriptions or {label_str: label_str for label_str in self.labels}
+        return {
+            "type": self.kind,
+            "instructions": self.task,
+            "criteria": criteria,
+        }
+
     def wire_head_for(self, provider: str) -> dict:
         if provider in ("local", "modernbert"):
             return self.to_local_head()
         if provider == "jev":
             return self.to_jev_head()
+        if provider == "drex":
+            return self.to_drex_head()
         return self.to_decide_head()
 
 
@@ -154,7 +184,9 @@ def make_score(
     labels = [str(i) for i in range(score_min, score_max + 1)]
     descriptions = None
     if legend:
-        descriptions = dict(zip(labels, legend))
+        # strict: a legend whose length doesn't match the level count is an
+        # authoring error — fail loudly instead of silently truncating
+        descriptions = dict(zip(labels, legend, strict=True))
     return Head(
         id=id or head_id_from_task(task),
         kind="score",

@@ -7,6 +7,8 @@ import json
 from conftest import load_fixture
 
 import sys1
+from sys1.parsers import parse_drex, parse_glide
+from sys1.types import make_choice, make_noul, make_score
 
 
 def _decide_response(content_obj: dict) -> dict:
@@ -210,3 +212,213 @@ class TestNoulFallback:
         heads = [sys1.heads_for("change", "jev")[2]]
         parsed = sys1.parsers.parse_jev(resp, heads)
         assert parsed["breaking_change"]["noul"] is False
+
+
+# ── Drex (/v1/systemone, nace.ai) ─────────────────────────────────────────────
+
+
+class TestParseDrex:
+    def _heads(self):
+        return [
+            make_choice("Is this a feature or fix?", ["feat", "fix"], id="diff_type"),
+            make_noul("Does this convey urgency?", id="urgent"),
+            make_score(
+                "Rate the risk",
+                id="risk",
+                score_min=1,
+                score_max=5,
+                legend=["low", "medium", "high", "very high", "extreme"],
+            ),
+        ]
+
+    def test_choice_answer(self):
+        resp = {
+            "answers": {
+                "diff_type": {
+                    "type": "choice",
+                    "choice": "fix",
+                    "probabilities": {"fix": 0.7, "feat": 0.3},
+                    "confidence": 0.77,
+                }
+            }
+        }
+        parsed = parse_drex(resp, self._heads())
+        entry = parsed["diff_type"]
+        assert entry["type"] == "choice"
+        assert entry["label"] == "fix"
+        assert entry["confidence"] == 0.77
+        assert entry["probabilities"]["fix"] == 0.7
+
+    def test_noul_answer_has_no_confidence_field(self):
+        # Drex noul: p IS the certainty; gating derives max(p, 1-p).
+        resp = {"answers": {"urgent": {"type": "noul", "noul": 0.931}}}
+        parsed = parse_drex(resp, self._heads())
+        entry = parsed["urgent"]
+        assert entry["type"] == "noul" and entry["noul"] == 0.931
+        assert entry.get("confidence") is None
+
+    def test_score_shifted_to_sys1_scale_and_legend_dict(self):
+        # Drex score = Σ index x probability over the 0-indexed array;
+        # sys1 scales run score_min..score_max, so shift by score_min.
+        resp = {
+            "answers": {
+                "risk": {
+                    "type": "score",
+                    "score": 2.3,
+                    "legend": ["low", "medium", "high", "very high", "extreme"],
+                    "probabilities": {"0": 0.1, "1": 0.2, "2": 0.4, "3": 0.2, "4": 0.1},
+                    "confidence": 0.8,
+                }
+            }
+        }
+        parsed = parse_drex(resp, self._heads())
+        entry = parsed["risk"]
+        assert entry["score"] == 3.3  # 1 (score_min) + 2.3
+        assert entry["legend"] == {"1": "low", "2": "medium", "3": "high", "4": "very high", "5": "extreme"}
+        assert entry["confidence"] == 0.8
+
+    def test_missing_answer_declined(self):
+        parsed = parse_drex({"answers": {}}, self._heads())
+        assert parsed["diff_type"].get("label") is None
+        assert parsed["diff_type"].get("_declined") is not None
+
+    def test_no_answers_envelope(self):
+        parsed = parse_drex({"model": "drex-v1.5"}, self._heads())
+        assert all(parsed[h.id].get("_declined") == "no-answers" for h in self._heads())
+
+
+class TestParseGlide:
+    def _heads(self):
+        return [
+            make_choice("Is this a feature or fix?", ["feat", "fix"], id="diff_type"),
+            make_noul("Does this convey urgency?", id="urgent"),
+            make_score(
+                "Rate the risk",
+                id="risk",
+                score_min=1,
+                score_max=5,
+                legend=["low", "medium", "high", "very high", "extreme"],
+            ),
+        ]
+
+    def test_choice_answer_keeps_margin_confidence(self):
+        # GLiDE choice confidence is the documented top1-top2 margin — kept.
+        resp = {
+            "answers": {
+                "diff_type": {
+                    "type": "choice",
+                    "choice": "fix",
+                    "probabilities": {"fix": 0.7, "feat": 0.3},
+                    "confidence": 0.4,
+                }
+            }
+        }
+        parsed = parse_glide(resp, self._heads())
+        entry = parsed["diff_type"]
+        assert entry["type"] == "choice"
+        assert entry["label"] == "fix"
+        assert entry["confidence"] == 0.4
+        assert entry["probabilities"]["fix"] == 0.7
+
+    def test_noul_confidence_stripped(self):
+        # GLiDE noul confidence is |2p-1| — on that scale a p=0.85 answer
+        # scores 0.70, which would make the shared Jev-family floor stricter
+        # than jev/drex for the same answer. Stripped so gating derives
+        # max(p, 1-p) family-consistently.
+        resp = {"answers": {"urgent": {"type": "noul", "noul": 0.9977, "confidence": 0.9954}}}
+        parsed = parse_glide(resp, self._heads())
+        entry = parsed["urgent"]
+        assert entry["type"] == "noul" and entry["noul"] == 0.9977
+        assert entry.get("confidence") is None
+
+    def test_score_shifted_and_legend_dict_keys_shifted(self):
+        # GLiDE score is 0-indexed like Drex, but legend/probabilities arrive
+        # as an index-keyed dict (Drex sends a legend array), so the legend
+        # keys shift instead of an array->dict conversion.
+        resp = {
+            "answers": {
+                "risk": {
+                    "type": "score",
+                    "score": 2.3,
+                    "expected_level": 2.28,
+                    "confidence": 0.4,
+                    "probabilities": {"0": 0.1, "1": 0.2, "2": 0.4, "3": 0.2, "4": 0.1},
+                    "legend": {"0": "low", "1": "medium", "2": "high", "3": "very high", "4": "extreme"},
+                }
+            }
+        }
+        parsed = parse_glide(resp, self._heads())
+        entry = parsed["risk"]
+        assert entry["score"] == 3.3  # 1 (score_min) + 2.3
+        assert entry["legend"] == {"1": "low", "2": "medium", "3": "high", "4": "very high", "5": "extreme"}
+        assert entry["expected_level"] == 2.28
+        assert entry["confidence"] == 0.4
+
+    def test_missing_answer_declined(self):
+        parsed = parse_glide({"answers": {}}, self._heads())
+        assert parsed["diff_type"].get("label") is None
+        assert parsed["diff_type"].get("_declined") is not None
+
+    def test_no_answers_envelope(self):
+        parsed = parse_glide({"model": "glide"}, self._heads())
+        assert all(parsed[h.id].get("_declined") == "no-answers" for h in self._heads())
+
+    def test_live_probe_shapes(self):
+        # Response shapes captured verbatim from the 2026-10-01 live probes.
+        choice = parse_glide(
+            {
+                "model": "glide",
+                "answers": {
+                    "action": {
+                        "type": "choice",
+                        "choice": "rollback",
+                        "confidence": 0.9976600111427877,
+                        "probabilities": {
+                            "rollback": 0.9985705895911658,
+                            "hotfix": 0.0009105784483781524,
+                            "wait": 0.0005188319604560046,
+                        },
+                    }
+                },
+                "usage": {"input_tokens": 135, "output_tokens": 1},
+                "token_usage": 136,
+            },
+            [make_choice("What should we do right now?", ["rollback", "hotfix", "wait"], id="action")],
+        )
+        assert choice["action"]["label"] == "rollback"
+        assert choice["action"]["confidence"] == 0.9976600111427877
+
+        noul = parse_glide(
+            {
+                "model": "glide",
+                "answers": {
+                    "refund_allowed": {
+                        "type": "noul",
+                        "noul": 0.006692851264816553,
+                        "confidence": 0.9866142974703669,
+                    }
+                },
+            },
+            [make_noul("Does this request qualify?", id="refund_allowed")],
+        )
+        assert noul["refund_allowed"]["noul"] == 0.006692851264816553
+        assert noul["refund_allowed"].get("confidence") is None
+
+        score = parse_glide(
+            {
+                "model": "glide",
+                "answers": {
+                    "severity": {
+                        "type": "score",
+                        "score": 0,
+                        "expected_level": 0.0265412062438048,
+                        "confidence": 0.9504486995424942,
+                        "probabilities": {"0": 0.97485368478167, "1": 0.024404985239175822},
+                        "legend": {"0": "Negligible", "1": "Minor"},
+                    }
+                },
+            },
+            [make_score("How severe?", id="severity", score_min=1, score_max=2, legend=["Negligible", "Minor"])],
+        )
+        assert score["severity"]["score"] == 1.0  # score_min + 0
+        assert score["severity"]["legend"] == {"1": "Negligible", "2": "Minor"}

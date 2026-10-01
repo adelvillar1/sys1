@@ -7,6 +7,7 @@ Config dict mirrors dev-decisions' shape 1:1 (`providers`, `classify`, `scan`,
 
 from __future__ import annotations
 
+import copy
 import os
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,27 @@ DEFAULTS: dict = {
         "jev_api_url": "https://api.typesafe.ai/v1/systemone",
         "jev_model": "jev-1.13.0",
         "jev_api_key_env": "TYPESAFE_API_KEY",
+        # Nace Drex (hosted, /v1/systemone wire) — Jev-class decision model
+        # with a 131,072-token state window on drex-v1.5. state is a plain
+        # string, bounded by drex_max_chars (~headroom under 128K tokens),
+        # NOT scan.max_diff_chars — the long context is the feature.
+        # `drex-latest` is the documented stable alias for drex-v1.5.
+        "drex_api_url": "https://drex.nace.ai/v1/systemone",
+        "drex_model": "drex-v1.5",
+        "drex_api_key_env": "DREX_API_KEY",
+        "drex_max_chars": 400_000,
+        # Fastino GLiDE (hosted, /v1/systemone wire) — Jev/Drex-class decision
+        # model with a 40,000-token rendered-prompt limit. state is a plain
+        # string, bounded by glide_max_chars (~headroom under 40K tokens at
+        # ~2.5 chars/token). Strict validation like Drex: no extra `id` field
+        # per question; noul criteria keys must be `true`/`false`. Confidence
+        # is explicit on choice/score (top1-top2 margin); noul confidence is
+        # stripped in parse_glide so gating derives max(p, 1-p) family-
+        # consistently. ~free: $0 input / $0.04 per 1M output tokens.
+        "glide_api_url": "https://api.fastino.ai/v1/systemone",
+        "glide_model": "fastino/glide",
+        "glide_api_key_env": "FASTINO_API_KEY",
+        "glide_max_chars": 100_000,
         # Local GLiNER2 — the fastino-prescribed classification API
         # (gliner2.classification.Classifier). Two serving modes: a load-once
         # classifier server (service/classifier_server.py) when
@@ -95,6 +117,20 @@ DEFAULTS: dict = {
         # only the model name differs (zero network).
         "decide_1b_model": "fastino/GLiNER2.5-Decide-1B",
         "decide_multi_model": "fastino/GLiNER2.5-multi-Decide",
+
+        # ── routing (routing.route → cascade_classify's default chain) ──────
+        # Deterministic chain policy: per-task override, else the default
+        # chain (hosted-only by design — local/modernbert are never
+        # auto-routed), size-gated by the provider's documented bound,
+        # filtered by availability and the task's own provider allow-list.
+        # `enabled = false` restores the legacy ["decide", "jev"] cascade
+        # default. See docs/plans/2026-10-01-glide-provider-and-router.md.
+        "route": {
+            "enabled": True,
+            "default_chain": "glide,drex,jev",
+            "by_task": {},  # task id -> chain string, e.g. {safety = "jev,glide"}
+            "long_input_chars": None,  # default: glide_max_chars
+        },
     },
     "log": {
         "redact_fields": ("content", "context", "match", "_raw"),
@@ -117,7 +153,11 @@ def load_config(
       3. Each path in `extra_paths` (caller-provided, must exist)
       4. `<repo_root>/.sys1.toml` and `<repo_root>/.dev-decisions.toml`
     """
-    cfg: dict[str, Any] = {section: dict(values) for section, values in DEFAULTS.items()}
+    # deepcopy, not dict(): nested sections (providers.route) must not be
+    # shared by reference across load_config() calls — a caller mutating
+    # cfg["providers"]["route"] would otherwise mutate the DEFAULTS module
+    # global and leak into every later load.
+    cfg: dict[str, Any] = copy.deepcopy(DEFAULTS)
 
     files_to_load: list[Path] = [p for p in DEFAULT_CONFIG_FILES if p.exists()]
     if extra_paths:

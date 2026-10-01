@@ -37,3 +37,6 @@ sys1-*.log
 
 # Local env reference (gitignored; holds credentials/URLs)
 CLAUDE.local.md
+
+# Local env vars (gitignored; holds API keys, e.g. DREX_API_KEY)
+.env

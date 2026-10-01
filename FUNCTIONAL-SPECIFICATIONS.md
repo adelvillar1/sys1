@@ -50,6 +50,7 @@ Head interpretation:
 ## 2. Cascade Classification
 
 - `cascade_classify(provider_chain, task, text)` walks providers in order.
+- With no explicit `provider_chain`, the chain is routed (`routing.route`, deterministic): per-task override (`providers.route.by_task`) else the default `glide,drex,jev` — hosted-only by design — size-gated past `glide_max_chars` (drex first for long inputs), filtered by availability and the task's own provider allow-list. `providers.route.enabled = false` restores the legacy `["decide", "jev"]`. The decision rides into the JSONL record as `route_chain` / `route_reason`.
 - Stops at the first provider where **every head** has a real label/noul/score AND its confidence clears the head's floor. Noul answers clear on the derived certainty `max(p, 1 − p)`; a noul with an explicit `confidence` clears on that — same rule as `interpret()`.
 - The floor per head resolves through the same ladder as `interpret()` (§3): per-provider config key > `head.floor` > explicit `confidence_floor` argument > task > global > provider default.
 - If nothing clears, returns the last provider that did return answers.

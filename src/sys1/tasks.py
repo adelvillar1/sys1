@@ -36,14 +36,14 @@ _CHANGE = Task(
             "What type of change is this diff? Choose exactly one category.",
             DIFF_TYPE_LABELS,
             id="diff_type",
-            descriptions={l: f"A {l} change." for l in DIFF_TYPE_LABELS},
+            descriptions={label: f"A {label} change." for label in DIFF_TYPE_LABELS},
         ),
         make_choice(
             "What is the risk level of this change? low = safe, routine; medium = some behavior "
             "change; high = affects public APIs, data, auth, or invariants.",
             RISK_LABELS,
             id="risk_tier",
-            descriptions={l: f"Risk level {l}." for l in RISK_LABELS},
+            descriptions={label: f"Risk level {label}." for label in RISK_LABELS},
         ),
     ],
     provider_heads={
@@ -52,14 +52,14 @@ _CHANGE = Task(
                 "What type of change is this diff? Choose exactly one category.",
                 DIFF_TYPE_LABELS,
                 id="diff_type",
-                descriptions={l: f"A {l} change." for l in DIFF_TYPE_LABELS},
+                descriptions={label: f"A {label} change." for label in DIFF_TYPE_LABELS},
             ),
             make_choice(
                 "What is the risk level? low = safe routine; medium = some behavior change; "
                 "high = public API, data, auth, or invariant change.",
                 RISK_LABELS,
                 id="risk_tier",
-                descriptions={l: f"Risk level {l}." for l in RISK_LABELS},
+                descriptions={label: f"Risk level {label}." for label in RISK_LABELS},
             ),
             make_noul(
                 "Does this diff introduce a breaking change — removes a public API, changes a "
@@ -371,19 +371,19 @@ _PR_GATE = Task(
                 "What type of change is this PR?",
                 DIFF_TYPE_LABELS,
                 id="diff_type",
-                descriptions={l: f"A {l} change." for l in DIFF_TYPE_LABELS},
+                descriptions={label: f"A {label} change." for label in DIFF_TYPE_LABELS},
             ),
             make_choice(
                 "What is the risk level?",
                 RISK_LABELS,
                 id="risk_tier",
-                descriptions={l: f"Risk level {l}." for l in RISK_LABELS},
+                descriptions={label: f"Risk level {label}." for label in RISK_LABELS},
             ),
             make_choice(
                 "Which labels should be applied?",
                 PR_LABELS,
                 id="suggested_labels",
-                descriptions={l: f"Apply {l} label." for l in PR_LABELS},
+                descriptions={label: f"Apply {label} label." for label in PR_LABELS},
                 multi_label=True,
             ),
         ],
@@ -468,10 +468,18 @@ def list_tasks() -> list[str]:
 
 
 def heads_for(task: Task | str, provider: str) -> list[Head]:
-    """Pick the head set for a given provider, falling back to the task default."""
+    """Pick the head set for a given provider, falling back to the task default.
+
+    Drex and GLiDE have no per-task overrides of their own: both are Jev-class
+    (same noul/choice/score primitives, same calibrated-probability semantics),
+    so they inherit the `jev` head set wherever one is defined. Tasks that
+    never gave jev its own heads fall through to the task default for all three.
+    """
     t = _TASKS.get(task) if isinstance(task, str) else task
     if t is None:
         raise KeyError(f"unknown task {task!r}; known: {sorted(_TASKS)}")
+    if provider in ("drex", "glide") and provider not in t.provider_heads:
+        provider = "jev"
     return t.provider_heads.get(provider, t.heads)
 
 
@@ -493,7 +501,7 @@ def detect_task_from_text(text: str, default: str = "change") -> Task | None:
     if any(p in lowered for p in dep_patterns):
         return _TASKS.get("deps_risk")
     doc_patterns = [".md", ".rst", ".txt", "docs/", "documentation/"]
-    if ".md" in lowered or "docs/" in lowered:
+    if any(p in lowered for p in doc_patterns):
         return _TASKS.get("docs_drift")
     return _TASKS.get(default)
 

@@ -95,32 +95,34 @@ class TestHttpPostJson:
 
     def test_4xx_raises_immediately(self):
         err = urllib.error.HTTPError("u", 400, "bad", {}, io.BytesIO(b"invalid input"))
-        with patch("urllib.request.urlopen", side_effect=err):
-            with pytest.raises(RuntimeError) as exc:
-                http_post_json(
-                    "https://api.test/v1",
-                    {},
-                    api_key="k",
-                    timeout=5,
-                    max_retries=2,
-                    backoff=0.01,
-                    telemetry={},
-                )
+        with patch("urllib.request.urlopen", side_effect=err), pytest.raises(RuntimeError) as exc:
+            http_post_json(
+                "https://api.test/v1",
+                {},
+                api_key="k",
+                timeout=5,
+                max_retries=2,
+                backoff=0.01,
+                telemetry={},
+            )
         assert "400" in str(exc.value)
 
     def test_5xx_retries_then_raises(self):
         err = urllib.error.HTTPError("u", 503, "down", {}, io.BytesIO(b"unavailable"))
-        with patch("urllib.request.urlopen", side_effect=err), patch("time.sleep"):
-            with pytest.raises(RuntimeError) as exc:
-                http_post_json(
-                    "https://api.test/v1",
-                    {},
-                    api_key="k",
-                    timeout=5,
-                    max_retries=1,
-                    backoff=0.01,
-                    telemetry={},
-                )
+        with (
+            patch("urllib.request.urlopen", side_effect=err),
+            patch("time.sleep"),
+            pytest.raises(RuntimeError) as exc,
+        ):
+            http_post_json(
+                "https://api.test/v1",
+                {},
+                api_key="k",
+                timeout=5,
+                max_retries=1,
+                backoff=0.01,
+                telemetry={},
+            )
         assert "503" in str(exc.value)
 
     def test_429_retries_then_succeeds(self):
@@ -161,17 +163,20 @@ class TestHttpPostJson:
         assert tele["structured_ok"] is False
 
     def test_network_error_retries(self):
-        with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("nope")), patch("time.sleep"):
-            with pytest.raises(RuntimeError):
-                http_post_json(
-                    "https://api.test/v1",
-                    {},
-                    api_key="k",
-                    timeout=5,
-                    max_retries=1,
-                    backoff=0.01,
-                    telemetry={},
-                )
+        with (
+            patch("urllib.request.urlopen", side_effect=urllib.error.URLError("nope")),
+            patch("time.sleep"),
+            pytest.raises(RuntimeError),
+        ):
+            http_post_json(
+                "https://api.test/v1",
+                {},
+                api_key="k",
+                timeout=5,
+                max_retries=1,
+                backoff=0.01,
+                telemetry={},
+            )
 
     def test_string_body_passthrough(self):
         with patch("urllib.request.urlopen", return_value=_make_resp(200, b'{"ok": true}')) as m:
@@ -400,3 +405,284 @@ class TestModernBertProvider:
         assert tele["error_kind"] == "json"
         heads = sys1.heads_for("change", "modernbert")
         assert all(result[h.id]["confidence"] == 0.0 for h in heads)
+
+
+# ── Drex provider (hosted Nace, /v1/systemone, plain-string state) ────────────
+
+
+class TestDrexProvider:
+    def _heads(self):
+        return sys1.heads_for("change", "drex")
+
+    def test_drex_needs_key(self, cfg):
+        import os
+
+        os.environ.pop("DREX_API_KEY", None)
+        assert is_available("drex", cfg) is False
+        os.environ["DREX_API_KEY"] = "sk-test"
+        try:
+            assert is_available("drex", cfg) is True
+        finally:
+            os.environ.pop("DREX_API_KEY", None)
+
+    def test_call_drex_wire_and_usage(self, cfg):
+        import os
+
+        os.environ["DREX_API_KEY"] = "sk-test"
+        cfg["providers"]["drex_model"] = "drex-v1.5"
+        try:
+            resp_body = {
+                "model": "drex-v1.5",
+                "answers": {
+                    "diff_type": {"type": "choice", "choice": "fix", "probabilities": {"fix": 0.8}, "confidence": 0.8},
+                    "risk_tier": {"type": "choice", "choice": "medium", "confidence": 0.71},
+                    "breaking_change": {"type": "noul", "noul": 0.02},
+                },
+                "usage": {"input_tokens": 106, "output_tokens": 212},
+                "evaluation_time_ms": 142.6,
+                "request_id": "req_" + "a" * 32,
+            }
+            captured = {}
+
+            def _fake_urlopen(req, timeout=None):
+                captured["url"] = req.full_url
+                captured["body"] = json.loads(req.data.decode())
+                return _make_resp(200, json.dumps(resp_body).encode())
+
+            with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+                tele: dict = {}
+                result = sys1.call_provider("drex", "diff text", self._heads(), cfg, tele)
+
+            # request shape: plain-string state, config model, drex questions
+            assert captured["url"] == cfg["providers"]["drex_api_url"]
+            assert captured["body"]["model"] == "drex-v1.5"
+            assert captured["body"]["state"] == "diff text"
+            assert "id" not in next(iter(captured["body"]["questions"].values()))
+            # answers normalize to the shared wire
+            assert result["diff_type"]["label"] == "fix"
+            assert result["breaking_change"]["noul"] == 0.02
+            # contract telemetry keys populated from Drex usage
+            assert tele["http_status"] == 200
+            assert tele["structured_ok"] is True
+            assert tele["token_prompt"] == 106
+            assert tele["token_completion"] == 212
+            assert tele["token_total"] == 318
+            assert tele["evaluation_time_ms"] == 142.6
+            assert tele["request_id"].startswith("req_")
+        finally:
+            os.environ.pop("DREX_API_KEY", None)
+
+    def test_state_truncated_by_drex_max_chars(self, cfg):
+        import os
+
+        os.environ["DREX_API_KEY"] = "sk-test"
+        cfg["providers"]["drex_max_chars"] = 4
+        try:
+            captured = {}
+
+            def _fake_urlopen(req, timeout=None):
+                captured["body"] = json.loads(req.data.decode())
+                return _make_resp(
+                    200,
+                    json.dumps(
+                        {
+                            "answers": {
+                                "diff_type": {"type": "choice", "choice": "fix", "confidence": 0.8},
+                                "risk_tier": {"type": "choice", "choice": "low", "confidence": 0.8},
+                                "breaking_change": {"type": "noul", "noul": 0.5},
+                            }
+                        }
+                    ).encode(),
+                )
+
+            with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+                sys1.call_provider("drex", "abcdefghij", self._heads(), cfg, {})
+            assert captured["body"]["state"] == "abcd"  # not scan.max_diff_chars
+        finally:
+            os.environ.pop("DREX_API_KEY", None)
+
+    def test_noul_criteria_uses_true_false_keys(self, cfg):
+        import os
+
+        os.environ["DREX_API_KEY"] = "sk-test"
+        try:
+            captured = {}
+
+            def _fake_urlopen(req, timeout=None):
+                captured["body"] = json.loads(req.data.decode())
+                return _make_resp(
+                    200,
+                    json.dumps(
+                        {
+                            "answers": {
+                                "diff_type": {"type": "choice", "choice": "fix", "confidence": 0.8},
+                                "risk_tier": {"type": "choice", "choice": "low", "confidence": 0.8},
+                                "breaking_change": {"type": "noul", "noul": 0.5},
+                            }
+                        }
+                    ).encode(),
+                )
+
+            with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+                sys1.call_provider("drex", "diff", self._heads(), cfg, {})
+            noul_q = next(
+                q for q in captured["body"]["questions"].values() if q["type"] == "noul"
+            )
+            assert set(noul_q["criteria"].keys()) == {"true", "false"}
+        finally:
+            os.environ.pop("DREX_API_KEY", None)
+
+    def test_config_view_is_url_kind(self, cfg):
+        from sys1.providers import provider_config_view
+
+        view = provider_config_view("drex", cfg)
+        assert view["kind"] == "url"
+        assert view["api_key_env"] == "DREX_API_KEY"
+        assert view["requires_key"] is True
+        assert view["model"] == cfg["providers"]["drex_model"]
+
+    def test_floor_registered(self):
+        from sys1.gating import _DEFAULT_FLOORS
+
+        assert _DEFAULT_FLOORS["drex"] == 0.7
+
+    def test_in_core_roster(self):
+        assert "drex" in resolve_providers("core")
+        assert "drex" in resolve_providers("all")
+
+
+class TestGlideProvider:
+    def _heads(self):
+        return sys1.heads_for("change", "glide")
+
+    def test_glide_needs_key(self, cfg):
+        import os
+
+        os.environ.pop("FASTINO_API_KEY", None)
+        assert is_available("glide", cfg) is False
+        os.environ["FASTINO_API_KEY"] = "fk-test"
+        try:
+            assert is_available("glide", cfg) is True
+        finally:
+            os.environ.pop("FASTINO_API_KEY", None)
+
+    def test_call_glide_wire_and_usage(self, cfg):
+        import os
+
+        os.environ["FASTINO_API_KEY"] = "fk-test"
+        cfg["providers"]["glide_model"] = "fastino/glide"
+        try:
+            resp_body = {
+                "model": "glide",
+                "answers": {
+                    "diff_type": {"type": "choice", "choice": "fix", "probabilities": {"fix": 0.8}, "confidence": 0.8},
+                    "risk_tier": {"type": "choice", "choice": "medium", "confidence": 0.71},
+                    "breaking_change": {"type": "noul", "noul": 0.02, "confidence": 0.96},
+                },
+                "usage": {"input_tokens": 152, "output_tokens": 1},
+                "token_usage": 153,
+            }
+            captured = {}
+
+            def _fake_urlopen(req, timeout=None):
+                captured["url"] = req.full_url
+                captured["body"] = json.loads(req.data.decode())
+                return _make_resp(200, json.dumps(resp_body).encode())
+
+            with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+                tele: dict = {}
+                result = sys1.call_provider("glide", "diff text", self._heads(), cfg, tele)
+
+            # request shape: plain-string state, config model, Drex-shape
+            # questions (GLiDE is strictly validated: no `id`, true/false noul)
+            assert captured["url"] == cfg["providers"]["glide_api_url"]
+            assert captured["body"]["model"] == "fastino/glide"
+            assert captured["body"]["state"] == "diff text"
+            assert "id" not in next(iter(captured["body"]["questions"].values()))
+            noul_q = next(q for q in captured["body"]["questions"].values() if q["type"] == "noul")
+            assert set(noul_q["criteria"].keys()) == {"true", "false"}
+            # answers normalize to the shared wire; noul confidence stripped
+            assert result["diff_type"]["label"] == "fix"
+            assert result["breaking_change"]["noul"] == 0.02
+            assert result["breaking_change"].get("confidence") is None
+            # contract telemetry keys populated from GLiDE usage
+            assert tele["http_status"] == 200
+            assert tele["structured_ok"] is True
+            assert tele["token_prompt"] == 152
+            assert tele["token_completion"] == 1
+            assert tele["token_total"] == 153
+            assert "evaluation_time_ms" not in tele  # Drex-only extra
+        finally:
+            os.environ.pop("FASTINO_API_KEY", None)
+
+    def test_state_truncated_by_glide_max_chars(self, cfg):
+        import os
+
+        os.environ["FASTINO_API_KEY"] = "fk-test"
+        cfg["providers"]["glide_max_chars"] = 4
+        try:
+            captured = {}
+
+            def _fake_urlopen(req, timeout=None):
+                captured["body"] = json.loads(req.data.decode())
+                return _make_resp(
+                    200,
+                    json.dumps(
+                        {
+                            "answers": {
+                                "diff_type": {"type": "choice", "choice": "fix", "confidence": 0.8},
+                                "risk_tier": {"type": "choice", "choice": "low", "confidence": 0.8},
+                                "breaking_change": {"type": "noul", "noul": 0.5},
+                            }
+                        }
+                    ).encode(),
+                )
+
+            with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+                sys1.call_provider("glide", "abcdefghij", self._heads(), cfg, {})
+            assert captured["body"]["state"] == "abcd"  # not scan.max_diff_chars
+        finally:
+            os.environ.pop("FASTINO_API_KEY", None)
+
+    def test_heads_for_inherits_jev_set(self):
+        assert [h.id for h in self._heads()] == [h.id for h in sys1.heads_for("change", "jev")]
+
+    def test_422_error_envelope_raises(self, cfg):
+        import os
+
+        os.environ["FASTINO_API_KEY"] = "fk-test"
+        try:
+            # GLiDE is strictly validated: extra `id` fields / yes-no noul
+            # criteria come back as HTTP 422 with an OpenAI-style envelope.
+            err_body = json.dumps(
+                {
+                    "error": {
+                        "message": "'questions.action.choice.id' is invalid: Extra inputs are not permitted",
+                        "type": "invalid_request_error",
+                    }
+                }
+            ).encode()
+            err = urllib.error.HTTPError("u", 422, "Unprocessable Entity", {}, io.BytesIO(err_body))
+            with patch("urllib.request.urlopen", side_effect=err), pytest.raises(RuntimeError) as exc:
+                sys1.call_provider("glide", "diff", self._heads(), cfg, {})
+            assert "422" in str(exc.value)
+        finally:
+            os.environ.pop("FASTINO_API_KEY", None)
+
+    def test_config_view_is_url_kind(self, cfg):
+        from sys1.providers import provider_config_view
+
+        view = provider_config_view("glide", cfg)
+        assert view["kind"] == "url"
+        assert view["api_key_env"] == "FASTINO_API_KEY"
+        assert view["requires_key"] is True
+        assert view["model"] == cfg["providers"]["glide_model"]
+
+    def test_floor_registered(self):
+        from sys1.gating import _DEFAULT_FLOORS
+
+        assert _DEFAULT_FLOORS["glide"] == 0.7
+
+    def test_in_core_roster(self):
+        assert "glide" in resolve_providers("core")
+        assert "glide" in resolve_providers("all")
