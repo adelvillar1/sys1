@@ -478,7 +478,7 @@ def heads_for(task: Task | str, provider: str) -> list[Head]:
     t = _TASKS.get(task) if isinstance(task, str) else task
     if t is None:
         raise KeyError(f"unknown task {task!r}; known: {sorted(_TASKS)}")
-    if provider in ("drex", "glide") and provider not in t.provider_heads:
+    if provider in ("drex", "glide", "julia") and provider not in t.provider_heads:
         provider = "jev"
     return t.provider_heads.get(provider, t.heads)
 

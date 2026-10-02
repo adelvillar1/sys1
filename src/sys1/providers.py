@@ -22,6 +22,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,7 @@ from .parsers import (
     parse_glide,
     parse_gliner2,
     parse_jev,
+    parse_julia,
     parse_modernbert,
 )
 from .types import Answer, Head, Provider
@@ -334,6 +336,64 @@ def _glide_wire(pid: str):
     return _fn
 
 
+def _julia_wire(pid: str):
+    """
+    Classify fn for Supersoniclabs Julia-1 — BERT-based decision model on the
+    /v1/systemone shape with plain-string `state`.
+
+    Deltas vs _glide_wire (probed live 2026-10-02, all quoted in
+    docs/plans/2026-10-02-julia-provider.md):
+      - `Idempotency-Key` header is REQUIRED (missing -> 400
+        `idempotency_key_required`); one fresh uuid per logical call, reused
+        across that call's retries (the header's purpose).
+      - `User-Agent` header is REQUIRED: Cloudflare on this host 403s (error
+        1010) Python-urllib's default signature — the one http_post_json
+        sends. Scoped to this wire so other vendors' integrations stay as-is.
+      - 8,192-token rendered-prompt window; overflow surfaces as a raw 502,
+        not a structured error -> state is bounded by `julia_max_chars`
+        (12,000 ≈ headroom at the measured ~2.4-2.5 chars/token prose rate).
+      - Strict validation like Drex/GliDE: questions go through
+        Head.to_drex_head() (score `criteria` is an ARRAY — a map 422s; extra
+        fields like `id` 422).
+      - usage maps input_tokens/output_tokens onto the contract telemetry
+        keys (same as Drex/GliDE; usage.total_tokens also present).
+    Retry policy matches http_post_json defaults: 429/5xx retry, 4xx fail fast.
+    """
+
+    def _fn(text: str, heads: list[Head], cfg: dict, telemetry: dict) -> dict[str, Answer]:
+        pcfg = cfg["providers"]
+        api_key = api_key_for(pid, cfg)
+        if _requires_key(pid, cfg) and not api_key:
+            raise RuntimeError(f"${pcfg.get(f'{pid}_api_key_env', pid.upper() + '_API_KEY')} not set")
+        url = pcfg.get(f"{pid}_api_url", "")
+        if not url:
+            raise RuntimeError(f"providers.{pid}_api_url not configured")
+        body = {
+            "model": pcfg.get(f"{pid}_model", pid),
+            "state": text[: pcfg.get("julia_max_chars", 12_000)],
+            "questions": {h.id: h.to_drex_head() for h in heads},
+        }
+        resp = http_post_json(
+            url,
+            body,
+            api_key=api_key,
+            timeout=pcfg["request_timeout_seconds"],
+            max_retries=pcfg["max_retries"],
+            backoff=pcfg["retry_backoff_seconds"],
+            telemetry=telemetry,
+            extra_headers={"Idempotency-Key": str(uuid.uuid4()), "User-Agent": "sys1"},
+            label=pid,
+        )
+        usage = resp.get("usage") or {}
+        if usage.get("input_tokens") is not None:
+            telemetry["token_prompt"] = usage.get("input_tokens")
+            telemetry["token_completion"] = usage.get("output_tokens")
+            telemetry["token_total"] = (usage.get("input_tokens") or 0) + (usage.get("output_tokens") or 0)
+        return parse_julia(resp, heads)
+
+    return _fn
+
+
 def _gliner_wire(pid: str, model_key: str = "local_model"):
     """
     Classify fn for GLiNER2-family models, using the fastino-prescribed API
@@ -473,7 +533,7 @@ def _requires_key(pid: str, cfg: dict) -> bool:
     explicit = pcfg.get(f"{pid}_requires_key")
     if explicit is not None:
         return bool(explicit)
-    if pid in ("decide", "jev", "drex", "glide"):
+    if pid in ("decide", "jev", "drex", "glide", "julia"):
         return True
     url = pcfg.get(f"{pid}_api_url", "")
     if url:
@@ -800,10 +860,26 @@ register(
         is_configured=_hosted_available("glide"),
         description="Fastino's Jev/Drex-class decision model on the /v1/systemone wire with a "
         "40,000-token rendered-prompt limit. Plain-string state; noul/choice/score with "
-        "documented confidence formulas; ~free ($0 input / $0.04 per 1M output tokens).",
+        "documented confidence formulas; bills like hosted GLiNER-2.5-Decide (not free).",
         tier="core",
         wire="jev",
         meta={"setup": "set FASTINO_API_KEY (repo .env, gitignored); docs: docs.fastino.ai/concepts/decision-models"},
+    )
+)
+register(
+    Provider(
+        id="julia",
+        name="Supersoniclabs Julia-1 (hosted)",
+        classify=_julia_wire("julia"),
+        is_available=_hosted_available("julia"),
+        is_configured=_hosted_available("julia"),
+        description="Supersoniclabs' BERT-based decision model on the /v1/systemone wire with an "
+        "8,192-token window. Plain-string state; noul/choice/score; fan-out native (all heads, "
+        "one request); $0.025 per 1M input tokens, $0 output. Requires an Idempotency-Key and a "
+        "User-Agent header (Cloudflare-blocked otherwise).",
+        tier="core",
+        wire="jev",
+        meta={"setup": "set SUPERSONIC_API_KEY (repo .env, gitignored); docs: supersoniclabs.ai"},
     )
 )
 register(

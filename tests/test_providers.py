@@ -686,3 +686,158 @@ class TestGlideProvider:
     def test_in_core_roster(self):
         assert "glide" in resolve_providers("core")
         assert "glide" in resolve_providers("all")
+
+
+class TestJuliaProvider:
+    def _heads(self):
+        return sys1.heads_for("change", "julia")
+
+    def test_julia_needs_key(self, cfg):
+        import os
+
+        os.environ.pop("SUPERSONIC_API_KEY", None)
+        assert is_available("julia", cfg) is False
+        os.environ["SUPERSONIC_API_KEY"] = "sl-test"
+        try:
+            assert is_available("julia", cfg) is True
+        finally:
+            os.environ.pop("SUPERSONIC_API_KEY", None)
+
+    def test_call_julia_wire_headers_and_usage(self, cfg):
+        import os
+        import uuid
+
+        os.environ["SUPERSONIC_API_KEY"] = "sl-test"
+        try:
+            resp_body = {
+                "model": "julia-1",
+                "answers": {
+                    "diff_type": {"type": "choice", "choice": "fix", "probabilities": {"fix": 0.8}, "confidence": 0.8},
+                    "risk_tier": {"type": "choice", "choice": "medium", "confidence": 0.71},
+                    "breaking_change": {"type": "noul", "noul": 0.02},
+                },
+                "usage": {"input_tokens": 152, "output_tokens": 0, "total_tokens": 152},
+            }
+            captured = {}
+
+            def _fake_urlopen(req, timeout=None):
+                captured["url"] = req.full_url
+                captured["body"] = json.loads(req.data.decode())
+                captured["headers"] = dict(req.header_items())
+                return _make_resp(200, json.dumps(resp_body).encode())
+
+            with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+                tele: dict = {}
+                result = sys1.call_provider("julia", "diff text", self._heads(), cfg, tele)
+
+            # request shape: plain-string state, config model, Drex-shape
+            # questions (julia is strictly validated: no `id`, true/false noul,
+            # score criteria as an ordered array)
+            assert captured["url"] == cfg["providers"]["julia_api_url"]
+            assert captured["body"]["model"] == "julia-1"
+            assert captured["body"]["state"] == "diff text"
+            assert "id" not in next(iter(captured["body"]["questions"].values()))
+            noul_q = next(q for q in captured["body"]["questions"].values() if q["type"] == "noul")
+            assert set(noul_q["criteria"].keys()) == {"true", "false"}
+            # wire-required headers: Idempotency-Key (a parseable uuid) and a
+            # User-Agent (Cloudflare 403s the default Python-urllib signature)
+            idem = captured["headers"].get("Idempotency-key") or captured["headers"].get("Idempotency-Key")
+            assert idem and uuid.UUID(idem)
+            assert captured["headers"].get("User-agent") or captured["headers"].get("User-Agent")
+            # answers normalize to the shared wire; noul confidence absent
+            assert result["diff_type"]["label"] == "fix"
+            assert result["breaking_change"]["noul"] == 0.02
+            assert result["breaking_change"].get("confidence") is None
+            # contract telemetry keys populated from julia usage
+            assert tele["http_status"] == 200
+            assert tele["structured_ok"] is True
+            assert tele["token_prompt"] == 152
+            assert tele["token_completion"] == 0
+            assert tele["token_total"] == 152
+        finally:
+            os.environ.pop("SUPERSONIC_API_KEY", None)
+
+    def test_state_truncated_by_julia_max_chars(self, cfg):
+        import os
+
+        os.environ["SUPERSONIC_API_KEY"] = "sl-test"
+        cfg["providers"]["julia_max_chars"] = 4
+        try:
+            captured = {}
+
+            def _fake_urlopen(req, timeout=None):
+                captured["body"] = json.loads(req.data.decode())
+                return _make_resp(
+                    200,
+                    json.dumps(
+                        {
+                            "answers": {
+                                "diff_type": {"type": "choice", "choice": "fix", "confidence": 0.8},
+                                "risk_tier": {"type": "choice", "choice": "low", "confidence": 0.8},
+                                "breaking_change": {"type": "noul", "noul": 0.5},
+                            }
+                        }
+                    ).encode(),
+                )
+
+            with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+                sys1.call_provider("julia", "abcdefghij", self._heads(), cfg, {})
+            assert captured["body"]["state"] == "abcd"  # not scan.max_diff_chars
+        finally:
+            os.environ.pop("SUPERSONIC_API_KEY", None)
+
+    def test_heads_for_inherits_jev_set(self):
+        assert [h.id for h in self._heads()] == [h.id for h in sys1.heads_for("change", "jev")]
+
+    def test_502_window_overflow_raises(self, cfg):
+        import os
+
+        os.environ["SUPERSONIC_API_KEY"] = "sl-test"
+        try:
+            # Julia's 8192-token window overflow surfaces as a raw 502 (no
+            # structured error envelope) — the client-side julia_max_chars
+            # bound is the guard; the wire surfaces the 502 as RuntimeError.
+            err = urllib.error.HTTPError("u", 502, "Bad Gateway", {}, io.BytesIO(b"error code: 502"))
+            with patch("urllib.request.urlopen", side_effect=err), pytest.raises(RuntimeError) as exc:
+                sys1.call_provider("julia", "diff", self._heads(), cfg, {})
+            assert "502" in str(exc.value)
+        finally:
+            os.environ.pop("SUPERSONIC_API_KEY", None)
+
+    def test_config_view_is_url_kind(self, cfg):
+        from sys1.providers import provider_config_view
+
+        view = provider_config_view("julia", cfg)
+        assert view["kind"] == "url"
+        assert view["api_key_env"] == "SUPERSONIC_API_KEY"
+        assert view["requires_key"] is True
+        assert view["model"] == cfg["providers"]["julia_model"]
+
+    def test_floor_registered(self):
+        from sys1.gating import _DEFAULT_FLOORS
+
+        assert _DEFAULT_FLOORS["julia"] == 0.7
+
+    def test_in_core_roster(self):
+        assert "julia" in resolve_providers("core")
+        assert "julia" in resolve_providers("all")
+
+    def test_routing_default_chain_unchanged_and_size_excluded(self, cfg):
+        import os
+
+        from sys1 import routing
+        from sys1.tasks import get_task
+
+        # julia is registered but NOT in the default chain (waits on
+        # calibration evidence per the plan); the size gate respects its
+        # 8,192-token bound wherever a custom chain includes it.
+        os.environ["FASTINO_API_KEY"] = "fk-test"
+        os.environ["DREX_API_KEY"] = "sk-test"
+        os.environ["TYPESAFE_API_KEY"] = "ts-test"
+        try:
+            task = get_task("change")
+            assert routing.route(task, "short text", cfg) == ["glide", "drex", "jev"]
+        finally:
+            for name in ("FASTINO_API_KEY", "DREX_API_KEY", "TYPESAFE_API_KEY"):
+                os.environ.pop(name, None)
+        assert "julia" in routing._SIZE_EXCLUDED

@@ -39,6 +39,7 @@ _DEFAULT_FLOORS = {
     "jev": 0.7,
     "drex": 0.7,  # Jev-family calibrated semantics; noul derives max(p, 1-p)
     "glide": 0.7,  # Jev-family: parse_glide strips noul confidence (|2p-1| scale) so noul derives max(p, 1-p)
+    "julia": 0.7,  # noul derives max(p, 1-p); choice/score confidence is the top1 probability — directly thresholdable
     # candidates — inherit their wire family's semantics
     "clm": 0.7,          # jev wire
     "openjev": 0.65,     # community reproduction, slightly less trusted

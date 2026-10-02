@@ -229,6 +229,65 @@ def parse_glide(resp: dict, heads: list[Head]) -> dict[str, Answer]:
     return out
 
 
+def parse_julia(resp: dict, heads: list[Head]) -> dict[str, Answer]:
+    """
+    Julia-1 response — `{"answers": {id: {...}}}` (probed live 2026-10-02;
+    deltas quoted in docs/plans/2026-10-02-julia-provider.md).
+
+    Per-kind deltas vs GliDE:
+      - choice: {type, choice, confidence, probabilities} — confidence is the
+        top1 probability (byte-equals probabilities[top1] on the wire), a
+        probability scale directly thresholdable at the family floor; KEPT as
+        returned (no margin-strip decision like GliDE's).
+      - noul: {type, noul: p} — no confidence field exists on this wire, so
+        gating derives max(p, 1-p) family-consistently with nothing to strip.
+      - score: 0-indexed over the criteria array like Drex/GliDE (score
+        shifted by head.score_min); probabilities keyed by index STRING
+        ("0".."N-1"), and **legend arrives as null** (Drex sends an array,
+        GliDE an index-keyed dict) — synthesized from head.labels shifted by
+        score_min so score answers carry the same legend shape downstream.
+    """
+    inner: Any = resp
+    if "choices" in inner and isinstance(inner["choices"], list) and inner["choices"]:
+        msg = (inner["choices"][0] or {}).get("message") or {}
+        content = msg.get("content")
+        if isinstance(content, str):
+            try:
+                inner = _maybe_json(content)
+            except Exception:
+                return {h.id: declined("bad-content") for h in heads}
+
+    answers = inner.get("answers") if isinstance(inner, dict) else None
+    if not isinstance(answers, dict):
+        return {h.id: declined("no-answers") for h in heads}
+
+    out: dict[str, Answer] = {}
+    for head in heads:
+        a = answers.get(head.id) or answers.get(head.task)
+        if not isinstance(a, dict):
+            out[head.id] = declined("missing")
+            continue
+        entry = _jev_entry(head, a)
+        if entry.get("type") == "score" and head.kind == "score":
+            score = entry.get("score")
+            if isinstance(score, (int, float)) and not isinstance(score, bool):
+                entry["score"] = float(head.score_min) + float(score)
+            legend = entry.get("legend")
+            if isinstance(legend, dict):
+                entry["legend"] = {
+                    str(head.score_min + int(k)): str(v) for k, v in legend.items()
+                }
+            else:
+                # the criteria array to_drex_head() sent IS the level legend,
+                # in wire order (index 0 = lowest)
+                entry["legend"] = {
+                    str(head.score_min + i): str(label)
+                    for i, label in enumerate(head._score_criteria())
+                }
+        out[head.id] = entry
+    return out
+
+
 # ── Local GLiNER2 (subprocess wrapper) ────────────────────────────────────────
 
 def parse_local(parsed: dict, heads: list[Head]) -> dict[str, Answer]:

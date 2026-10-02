@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from conftest import load_fixture
 
 import sys1
-from sys1.parsers import parse_drex, parse_glide
+from sys1.parsers import parse_drex, parse_glide, parse_julia
 from sys1.types import make_choice, make_noul, make_score
 
 
@@ -422,3 +423,129 @@ class TestParseGlide:
         )
         assert score["severity"]["score"] == 1.0  # score_min + 0
         assert score["severity"]["legend"] == {"1": "Negligible", "2": "Minor"}
+
+
+class TestParseJulia:
+    def _heads(self):
+        return [
+            make_choice("Is this a feature or fix?", ["feat", "fix"], id="diff_type"),
+            make_noul("Does this convey urgency?", id="urgent"),
+            make_score(
+                "Rate the risk",
+                id="risk",
+                score_min=1,
+                score_max=5,
+                legend=["low", "medium", "high", "very high", "extreme"],
+            ),
+        ]
+
+    def test_choice_confidence_is_top1_probability_kept(self):
+        # Julia confidence byte-equals probabilities[top1] on the wire — a
+        # probability scale directly thresholdable at the family floor. Kept.
+        resp = {
+            "answers": {
+                "diff_type": {
+                    "type": "choice",
+                    "choice": "rollback",
+                    "confidence": 0.9998035793964622,
+                    "probabilities": {"rollback": 0.9998035793964622, "wait": 4.49e-05},
+                }
+            }
+        }
+        parsed = parse_julia(resp, self._heads()[:1])
+        entry = parsed["diff_type"]
+        assert entry["type"] == "choice"
+        assert entry["label"] == "rollback"
+        assert entry["confidence"] == 0.9998035793964622
+        assert entry["probabilities"]["rollback"] == 0.9998035793964622
+
+    def test_noul_has_no_confidence_on_wire(self):
+        # Julia noul is {type, noul: p} — nothing to strip (unlike GliDE);
+        # gating derives max(p, 1-p) family-consistently.
+        parsed = parse_julia(
+            {"answers": {"urgent": {"type": "noul", "noul": 0.9811307454626658}}},
+            self._heads()[1:2],
+        )
+        entry = parsed["urgent"]
+        assert entry["type"] == "noul" and entry["noul"] == 0.9811307454626658
+        assert entry.get("confidence") is None
+
+    def test_score_shifted_and_legend_null_synthesized(self):
+        # Julia score is 0-indexed like Drex/GliDE, but legend arrives as
+        # null (Drex sends an array, GliDE an index-keyed dict) — parse
+        # synthesizes it from head.labels shifted by score_min.
+        resp = {
+            "answers": {
+                "risk": {
+                    "type": "score",
+                    "score": 2.2961735052526153,
+                    "confidence": 0.647546325728892,
+                    "probabilities": {
+                        "0": 0.00016048672687044138,
+                        "1": 0.35137787507268997,
+                        "2": 0.0007522984464702376,
+                        "3": 0.647546325728892,
+                        "4": 0.00016301402507722814,
+                    },
+                    "legend": None,
+                }
+            }
+        }
+        parsed = parse_julia(resp, self._heads()[2:])
+        entry = parsed["risk"]
+        assert entry["score"] == pytest.approx(3.2961735052526153)  # 1 (score_min) + 2.296
+        assert entry["legend"] == {"1": "low", "2": "medium", "3": "high", "4": "very high", "5": "extreme"}
+        assert entry["confidence"] == 0.647546325728892
+
+    def test_missing_answer_declined(self):
+        parsed = parse_julia({"answers": {}}, self._heads())
+        assert parsed["diff_type"].get("label") is None
+        assert parsed["diff_type"].get("_declined") is not None
+
+    def test_no_answers_envelope(self):
+        parsed = parse_julia({"model": "julia-1"}, self._heads())
+        assert all(parsed[h.id].get("_declined") == "no-answers" for h in self._heads())
+
+    def test_live_probe_shapes(self):
+        # Response shapes captured verbatim from the 2026-10-02 live probes.
+        multi = parse_julia(
+            {
+                "model": "julia-1",
+                "answers": {
+                    "action": {
+                        "choice": "rollback",
+                        "confidence": 0.9998035793964622,
+                        "probabilities": {
+                            "hotfix": 0.00015147070547752252,
+                            "rollback": 0.9998035793964622,
+                            "wait": 4.4949898060260515e-05,
+                        },
+                        "type": "choice",
+                    },
+                    "troca": {"noul": 0.9811307454626658, "type": "noul"},
+                    "severity": {
+                        "confidence": 0.647546325728892,
+                        "legend": None,
+                        "probabilities": {
+                            "0": 0.00016048672687044138,
+                            "1": 0.35137787507268997,
+                            "2": 0.0007522984464702376,
+                            "3": 0.647546325728892,
+                            "4": 0.00016301402507722814,
+                        },
+                        "score": 2.2961735052526153,
+                        "type": "score",
+                    },
+                },
+                "usage": {"input_tokens": 225, "output_tokens": 0, "total_tokens": 225},
+            },
+            [
+                make_choice("What should we do right now?", ["rollback", "hotfix", "wait"], id="action"),
+                make_noul("Does the customer want to exchange the order?", id="troca"),
+                make_score("How severe?", id="severity", score_min=1, score_max=5, legend=["obvious-low", "low", "medium", "high", "obvious-high"]),
+            ],
+        )
+        assert multi["action"]["label"] == "rollback"
+        assert multi["troca"]["noul"] == 0.9811307454626658
+        assert multi["severity"]["score"] == pytest.approx(3.2961735052526153)
+        assert multi["severity"]["legend"]["4"] == "high"

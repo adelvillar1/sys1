@@ -134,7 +134,7 @@ Heads: `heads_for(task, "drex")` inherits the `jev` head set wherever a task def
 
 ### GLiDE deltas (probed live 2026-10-01 against docs.fastino.ai/concepts/decision-models)
 
-`glide` (Fastino, `fastino/glide`, ~free: $0 input / $0.04 per 1M output tokens) speaks the same `/v1/systemone` wire and reuses `to_drex_head()` verbatim — probed live: an extra `id` field per question or `yes`/`no` noul criteria keys return 422 `extra_forbidden`. Deltas handled inside `_glide_wire` / `parse_glide`:
+`glide` (Fastino, `fastino/glide`, billed like hosted GLiNER-2.5-Decide — not free; corrected 2026-10-02) speaks the same `/v1/systemone` wire and reuses `to_drex_head()` verbatim — probed live: an extra `id` field per question or `yes`/`no` noul criteria keys return 422 `extra_forbidden`. Deltas handled inside `_glide_wire` / `parse_glide`:
 
 - **40,000-token rendered-prompt limit**: `state` is a plain string bounded by `providers.glide_max_chars` (default 100,000 ≈ headroom at ~2.5 chars/token) — long-context work belongs to Drex (131,072 tokens).
 - **Score is 0-indexed like Drex** (shifted by `head.score_min`), but `probabilities`/`legend` arrive as a dict keyed by index string (`"0".."N-1"`) — the legend keys shift directly where Drex sends a legend *array*. `expected_level` (Σ index × p) rides along as a calibration extra.
@@ -143,6 +143,19 @@ Heads: `heads_for(task, "drex")` inherits the `jev` head set wherever a task def
 - **Usage keys**: `input_tokens`/`output_tokens` + a top-level `token_usage` int; no `evaluation_time_ms`/`request_id` on this wire. Latency is bimodal (1–8s observed, 17.5s tail) — well under the 30s timeout, but not the latency pick.
 
 Heads: `heads_for(task, "glide")` inherits the `jev` head set like drex. Needs `FASTINO_API_KEY` (repo `.env`).
+
+### Julia-1 deltas (probed live 2026-10-02, evidence in docs/plans/2026-10-02-julia-provider.md)
+
+`julia` (Supersoniclabs, `julia-1`) is a BERT-based decision model on the same `/v1/systemone` wire — `$0.025 per 1M input tokens / $0 output`, fan-out native (all heads in one request), 0.5–1.2s latency. Deltas handled inside `_julia_wire` / `parse_julia`:
+
+- **Two headers are REQUIRED on this host**: `Idempotency-Key` (missing → 400 `idempotency_key_required`; one fresh uuid per logical call, reused across that call's retries) and a `User-Agent` — Cloudflare 403s (error 1010) Python-urllib's default signature, which is what `http_post_json` sends, so the wire passes both via `extra_headers`.
+- **8,192-token window**: `state` is a plain string bounded by `providers.julia_max_chars` (default 12,000 ≈ headroom at the measured ~2.4–2.5 chars/token prose rate). Window overflow does NOT return a structured error — a ~9.7K-token request came back as a raw HTTP 502 — so the client-side bound is the only guard.
+- **Score takes `criteria` as an ordered ARRAY** (a map → 422 "invalid type: map, expected a sequence"; Jev's `levels` key → 422) — exactly what `to_drex_head()` produces. Strict validation like Drex/GliDE: extra fields (`id`) → 422.
+- **Score is 0-indexed like Drex/GliDE** (shifted by `head.score_min`), `probabilities` keyed by index string — but **`legend` arrives as `null`** (Drex sends an array, GliDE an index-keyed dict). `parse_julia` synthesizes the legend from `head._score_criteria()` — the criteria array the wire sent, in wire order.
+- **Confidence semantics: top1 probability** on choice/score (`confidence` byte-equals `probabilities[top1]`) — a probability scale directly thresholdable at the 0.7 floor, NOT GliDE's top1−top2 margin. noul is `{type, noul: p}` with no confidence field — gating derives `max(p, 1−p)` with nothing to strip.
+- **Usage keys**: `input_tokens`/`output_tokens`/`total_tokens` inside `usage`; no top-level `token_usage`, no `evaluation_time_ms`/`request_id`.
+
+Heads: `heads_for(task, "julia")` inherits the `jev` head set. Needs `SUPERSONIC_API_KEY` (repo `.env`). **Routing: registered core but NOT in the default chain** — four-way calibration (2026-10-02, six-text change corpus) found julia agreeing with glide AND jev only 1/6 on diff_type and 1/6 on risk_tier (overconfident on disagreeing labels, breaking-change under-detection), failing the cascade's first-provider calibration premise. Position: cheap fast triage head; per-task adoption via `providers.route.by_task` only with fitted floors. It IS in `_SIZE_EXCLUDED` (8,192-token bound) so any custom chain respects the size gate.
 
 ### Routing (cascade default chains)
 

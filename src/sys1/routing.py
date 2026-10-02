@@ -38,10 +38,10 @@ _LEGACY_CHAIN = ["decide", "jev"]
 _DEFAULT_CHAIN = ["glide", "drex", "jev"]
 
 # Providers with a documented input bound the router must respect. GLiDE's
-# 40,000-token rendered-prompt limit is the binding constraint on the default
-# chain (drex takes 131,072 tokens; jev truncates via scan.max_diff_chars
-# rather than failing). Keyed by provider id.
-_SIZE_EXCLUDED = {"glide"}
+# 40,000-token rendered-prompt limit and Julia-1's 8,192-token window are the
+# binding constraints on the default chain (drex takes 131,072 tokens; jev
+# truncates via scan.max_diff_chars rather than failing). Keyed by provider id.
+_SIZE_EXCLUDED = {"glide", "julia"}
 
 
 def route(task: Task, text: str, cfg: dict) -> list[str]:

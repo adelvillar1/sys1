@@ -57,11 +57,28 @@ DEFAULTS: dict = {
         # per question; noul criteria keys must be `true`/`false`. Confidence
         # is explicit on choice/score (top1-top2 margin); noul confidence is
         # stripped in parse_glide so gating derives max(p, 1-p) family-
-        # consistently. ~free: $0 input / $0.04 per 1M output tokens.
+        # consistently. Billing (user-corrected 2026-10-02): same as
+        # GLiNER-2.5-Decide hosted billing — NOT free; an earlier
+        # "$0 input / $0.04 per 1M output" note here was wrong.
         "glide_api_url": "https://api.fastino.ai/v1/systemone",
         "glide_model": "fastino/glide",
         "glide_api_key_env": "FASTINO_API_KEY",
         "glide_max_chars": 100_000,
+        # Supersoniclabs Julia-1 (hosted, /v1/systemone wire) — BERT-based
+        # decision model with an 8,192-token window. state is a plain string,
+        # bounded by julia_max_chars (headroom at the measured ~2.4-2.5
+        # chars/token prose rate; window overflow surfaces as a raw 502, so
+        # the client-side bound is the only guard). Strict validation like
+        # Drex/GliDE; requires an Idempotency-Key and a User-Agent header
+        # (Cloudflare 403s the default Python-urllib signature). Confidence
+        # on choice/score is the top1 probability — kept as returned; noul
+        # has no confidence field, gating derives max(p, 1-p). Cheapest
+        # hosted model in the pool: $0.025 per 1M input tokens, $0 output
+        # (user-stated 2026-10-02).
+        "julia_api_url": "https://api.supersoniclabs.ai/v1/systemone",
+        "julia_model": "julia-1",
+        "julia_api_key_env": "SUPERSONIC_API_KEY",
+        "julia_max_chars": 12_000,
         # Local GLiNER2 — the fastino-prescribed classification API
         # (gliner2.classification.Classifier). Two serving modes: a load-once
         # classifier server (service/classifier_server.py) when
