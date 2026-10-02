@@ -37,6 +37,7 @@ from pathlib import Path
 
 from .api import classify
 from .config import load_config
+from .routing import route_decision
 from .types import Task, make_choice, make_noul
 
 MAX_CRITERIA = 12
@@ -44,7 +45,9 @@ MAX_MODULES = 60
 PAIRS_PER_REQUEST = 14  # pr_gate_fanout rode 19 heads on jev; glide timed out. Stay under.
 MAP_FLOOR = 0.3   # recall-oriented: top-3 modules above this floor; consumers apply precision
 MAP_TOP = 3
-DEP_THRESHOLD = 0.65
+# Probe (2026-10-02, control-tower corpus): direction precision 1.0 at t >= 0.8
+# vs 0.5-0.67 at 0.65 — keep the band for the soft middle, default the cut high.
+DEP_THRESHOLD = 0.8
 DEP_BAND = 0.15  # [thr - band, thr) => uncertain, reported not dropped
 
 RISK_PATTERNS = ("migrat", "schema", "auth", "secret", "payment", "config", "deploy", "delete")
@@ -244,6 +247,16 @@ def _chain(provider: str | list[str]) -> list[str]:
     return [p.strip() for p in provider.split(",") if p.strip()]
 
 
+def _resolve_chain(provider: str | list[str], task: Task, state: str,
+                   cfg: dict) -> list[str]:
+    """"auto" routes through sys1 routing (per-task config overrides apply);
+    anything else is an explicit chain spec."""
+    if isinstance(provider, str) and provider.strip() == "auto":
+        chain, _reason = route_decision(task, state, cfg)
+        return chain
+    return _chain(provider)
+
+
 def _first_answers(result, chain: list[str]) -> tuple[str, dict]:
     for pid in chain:
         got = result.answers.get(pid) or {}
@@ -252,22 +265,22 @@ def _first_answers(result, chain: list[str]) -> tuple[str, dict]:
     return (chain[0] if chain else ""), {}
 
 
-def run_map(criteria: list[str], modules: list[dict], provider: str | list[str] = "glide,drex",
+def run_map(criteria: list[str], modules: list[dict], provider: str | list[str] = "auto",
             cfg: dict | None = None) -> dict:
     task, state = build_map_task(criteria, modules)
     cfg = cfg or load_config()
-    chain = _chain(provider)
+    chain = _resolve_chain(provider, task, state, cfg)
     result = classify(chain, task, state, cfg=cfg, log=True, input_sha256=_sha("map:" + state))
     pid, answers = _first_answers(result, chain)
     return {"provider": pid, "answers": answers, "telemetry": result.telemetry.get(pid, {}),
             "sha256": _sha("map:" + state), "chain": chain}
 
 
-def run_deps(criteria: list[str], provider: str | list[str] = "jev",
+def run_deps(criteria: list[str], provider: str | list[str] = "auto",
              cfg: dict | None = None, per_request: int = PAIRS_PER_REQUEST) -> dict:
     tasks, state = build_dep_tasks(criteria, per_request)
     cfg = cfg or load_config()
-    chain = _chain(provider)
+    chain = _resolve_chain(provider, tasks[0], state, cfg) if tasks else []
     answers: dict = {}
     shas: list[str] = []
     sha_by_head: dict[str, str] = {}
@@ -287,11 +300,11 @@ def run_deps(criteria: list[str], provider: str | list[str] = "jev",
             "sha_by_head": sha_by_head, "chain": chain}
 
 
-def run_attribution(commits: list[dict], criteria: list[str], provider: str | list[str] = "jev",
+def run_attribution(commits: list[dict], criteria: list[str], provider: str | list[str] = "auto",
                     cfg: dict | None = None, per_request: int = PAIRS_PER_REQUEST) -> dict:
     tasks, state = build_attribution_task(commits, criteria, per_request)
     cfg = cfg or load_config()
-    chain = _chain(provider)
+    chain = _resolve_chain(provider, tasks[0], state, cfg) if tasks else []
     answers: dict = {}
     sha_by_head: dict[str, str] = {}
     pid_used, telemetry = "", {}

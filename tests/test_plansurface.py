@@ -160,7 +160,7 @@ class TestAssemble:
         dep_res = self._deps({
             "p_0_1": {"probabilities": {"c0_first": 0.85, "c1_first": 0.05, "independent": 0.1}},
             "p_0_2": {"probabilities": {"c0_first": 0.1, "c1_first": 0.1, "independent": 0.8}},
-            "p_1_2": {"probabilities": {"c1_first": 0.55, "c2_first": 0.2, "independent": 0.25}},
+            "p_1_2": {"probabilities": {"c1_first": 0.7, "c2_first": 0.2, "independent": 0.1}},
         })
         art = assemble(map_res, dep_res, criteria, modules)
 
@@ -172,7 +172,7 @@ class TestAssemble:
         assert art["edges"] == [
             {"before": "C0", "after": "C1", "p": 0.85, "head": "p_0_1"},
         ]
-        assert len(art["uncertain"]) == 1  # p_1_2 at 0.55 is in the band, reported not dropped
+        assert len(art["uncertain"]) == 1  # p_1_2 at 0.7 is in the band, reported not dropped
         assert art["uncertain"][0]["pair"] == ["C1", "C2"]
         assert art["order"] == ["C0", "C1", "C2"]
         assert art["meta"]["dep_probs"]["0,2"]["independent"] == 0.8
@@ -181,13 +181,13 @@ class TestAssemble:
         criteria = ["a", "b", "c"]
         dep_res = self._deps({
             "p_0_1": {"probabilities": {"c0_first": 0.9, "c1_first": 0.05, "independent": 0.05}},
-            "p_1_2": {"probabilities": {"c1_first": 0.8, "c2_first": 0.1, "independent": 0.1}},
-            "p_0_2": {"probabilities": {"c2_first": 0.7, "c0_first": 0.2, "independent": 0.1}},
+            "p_1_2": {"probabilities": {"c1_first": 0.9, "c2_first": 0.05, "independent": 0.05}},
+            "p_0_2": {"probabilities": {"c2_first": 0.82, "c0_first": 0.13, "independent": 0.05}},
         })
         art = assemble({"provider": "s", "answers": {}, "telemetry": {}, "sha256": "x"},
                        dep_res, criteria, [])
-        assert art["cycle_breaks"], "C2->C0 at 0.7 must be dropped to break the cycle"
-        assert art["cycle_breaks"][0]["dropped"]["p"] == 0.7
+        assert art["cycle_breaks"], "C2->C0 at 0.82 (weakest cycle edge) must be dropped"
+        assert art["cycle_breaks"][0]["dropped"]["p"] == 0.82
         assert art["order"] == ["C0", "C1", "C2"]
 
 
@@ -200,7 +200,7 @@ def _artifact(order, dep_probs):
             {"id": "C2", "text": "docs pages", "modules": [], "risks": [], "touches_any": 0.2},
         ],
         "edges": [], "uncertain": [], "order": order, "cycle_breaks": [],
-        "thresholds": {"map": 0.5, "dep": 0.65, "band": 0.15},
+        "thresholds": {"map_floor": 0.3, "map_top": 3, "dep": 0.8, "band": 0.15},
         "meta": {"dep_probs": dep_probs},
     }
 
