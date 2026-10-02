@@ -37,6 +37,7 @@ and into a *decision contract* is the criteria.
 | `Head` / `Task` / `Answer` | `types.py` | Dataclasses: stable head ids, provider wire shapes |
 | `Provider` | `providers.py` | Pluggable registry: 6 core + 7 opt-in candidates |
 | `route()` / `route_decision()` | `routing.py` | Deterministic default-chain policy for the cascade: per-task override, size gate, availability, task allow-list |
+| `plansurface` | `plansurface.py` | Layered precompute for plan decomposition: criterion→module mapping, pairwise dependency heads, thresholded DAG assembly (uncertain band, cycle breaks), reconcile-vs-git grading, `grade_and_record()` calibration writer |
 | `parse_decide` / `_jev` / `_drex` / `_glide` / `_local` / `_modernbert` | `parsers.py` | Wire-shape normalization to the shared Answer dict |
 | `interpret()` | `gating.py` | Confidence floors → pass / escalate / block verdict |
 | `log_record()` | `telemetry.py` | JSONL log; redaction; calibration joins |
@@ -185,7 +186,7 @@ uvicorn service.main:app --host 0.0.0.0 --port 8400
 git clone https://github.com/adelvillar1/sys1.git
 cd sys1
 uv sync --all-extras
-uv run pytest                   # 233 tests
+uv run pytest                   # recorded fixtures + stub providers, no keys needed
 uv run sys1 doctor              # provider availability check
 uv run sys1 providers           # registry: core + candidates, flag/config/health
 ```
@@ -211,6 +212,15 @@ cascade = sys1.cascade_classify(["decide", "jev"], "issue_triage", issue_body)
 # Self-consistency: re-ask n times, band the signal, route the middle to review
 report = sys1.consistency_classify("local", "safety", text, n=5)
 print(report["heads"]["removes_auth"]["band"])   # "no" | "uncertain" | "yes"
+
+# Plan surface: precompute the decomposition judgment graph for a drafted plan
+from sys1 import plansurface as ps
+criteria = ps.parse_criteria(plan_text)
+modules = ps.inventory_surface(repo_root)
+map_res = ps.run_map(criteria, modules)            # criterion -> modules
+dep_res = ps.run_deps(criteria)                    # pairwise ordering heads
+artifact = ps.assemble(map_res, dep_res, criteria, modules)
+print(artifact["order"], artifact["edges"], artifact["uncertain"])
 ```
 
 ### Your own task (TOML)
@@ -273,6 +283,27 @@ result = sys1.classify("mine", "change", text)
 Every recipe runs against a live provider (`sys1 doctor` first) and is
 smoke-tested offline in `tests/test_recipe_pack.py` with a stub provider —
 no keys needed to check the wiring.
+
+---
+
+## Plan surface (layered precompute for task decomposition)
+
+`sys1.plansurface` turns a drafted plan into a precomputed judgment graph:
+criteria mapped to repository modules (one choice head over a numbered
+inventory + an existence noul each), pairwise criterion dependencies (one
+choice head per unordered pair, chunked requests), then plain-code assembly —
+thresholded DAG, topological order, in-band edges reported as uncertain,
+weakest-edge cycle breaks, path-pattern risk flags. `reconcile()` grades a
+surface against the actual commit sequence (Kendall tau, edge direction,
+threshold sweep) and `grade_and_record()` writes the per-head feedback rows.
+
+Defaults are probe-informed (2026-10-02, three real plans): map layer needs
+full distributions (jev — drex/glide return one weak top-1 pick); the dep
+threshold sits at 0.8, where measured direction precision was 1.0. The
+companion probe scripts live in `scripts/`: `probe-plan-replay.py`
+(retroactive replay of a plan against its commits) and the test-surface
+probe (`mutate-module.py` stdlib AST mutation harness +
+`probe-test-surface.py`, three sys1 layers graded by kill matrix).
 
 ---
 
@@ -416,9 +447,12 @@ sys1/
 │   ├── config.py        defaults, TOML load, env overrides, state.json
 │   ├── gating.py        interpret() + final_exit_code()
 │   ├── telemetry.py     JSONL log, redaction, histogram, feedback, calibration
-│   ├── api.py           classify(), cascade_classify(), health_report()
+│   ├── routing.py       route() / route_decision() — cascade chain policy
+│   ├── plansurface.py   plan-surface layers, DAG assembly, reconcile + grade_and_record
+│   ├── api.py           classify(), cascade_classify(), consistency_classify(), health_report()
 │   └── cli.py           sys1 classify / doctor / providers / tasks / version
-├── tests/               233 tests, recorded fixtures + mocked transports
+├── scripts/             probes: plan-replay, test-surface, AST mutation harness, parity check
+├── tests/               recorded fixtures + mocked transports (stub-provider pattern)
 ├── service/
 │   ├── main.py          FastAPI wrapper (classify/cascade/health/tasks/calibration)
 │   ├── dashboard.py     control dashboard router + single-page app
