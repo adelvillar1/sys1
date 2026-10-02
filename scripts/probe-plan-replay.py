@@ -44,72 +44,6 @@ def _frontmatter_created(plan_text: str) -> str | None:
     return m.group(1) if m else None
 
 
-def _actual_module(node: dict, files: list[str]) -> str | None:
-    """Module of the criterion whose mapped paths take the most commit files."""
-    counts: dict[str, int] = {}
-    for m in node.get("modules", []):
-        p = m["path"]
-        counts[m["id"]] = sum(1 for f in files if f == p or f.startswith(p + "/") or p in f)
-    best = max(counts.items(), key=lambda kv: kv[1]) if counts else None
-    return best[0] if best and best[1] > 0 else None
-
-
-def write_feedback(artifact: dict, map_res: dict, dep_res: dict, rec: dict, cfg: dict) -> int:
-    provider_map, provider_deps = artifact["meta"]["provider_map"], artifact["meta"]["provider_deps"]
-    n = 0
-    implemented = {c["criterion"]: c for c in rec["mapping"]}
-    by_criterion: dict[str, list[dict]] = {}
-    for c in rec["mapping"]:
-        by_criterion.setdefault(c["criterion"], []).append(c)
-
-    for node in artifact["criteria"]:
-        i = int(node["id"][1:])
-        ans_mod = map_res["answers"].get(f"c{i}_modules") or {}
-        if not ans_mod:
-            continue
-        files = [f for c in by_criterion.get(node["id"], []) for f in c.get("files", [])]
-        if files:
-            actual = _actual_module(node, files)
-            if actual:
-                record_feedback(
-                    input_sha256=map_res["sha256"], task="plan_surface_map",
-                    head_id=f"c{i}_modules", predicted_label=ans_mod.get("label"),
-                    predicted_confidence=ans_mod.get("confidence"), provider=provider_map,
-                    actual_label=actual, escalated=False, cfg=cfg)
-                n += 1
-        ans_any = map_res["answers"].get(f"c{i}_any") or {}
-        p_any = ans_any.get("noul") if isinstance(ans_any.get("noul"), (int, float)) else None
-        if p_any is not None:
-            yes = p_any >= 0.5
-            record_feedback(
-                input_sha256=map_res["sha256"], task="plan_surface_map",
-                head_id=f"c{i}_any", predicted_label="yes" if yes else "no",
-                predicted_confidence=round(p_any if yes else 1 - p_any, 3),
-                provider=provider_map,
-                actual_label="yes" if node["id"] in {c["criterion"] for c in rec["mapping"]} else "no",
-                escalated=False, cfg=cfg)
-            n += 1
-
-    pos = {nid: i for i, nid in enumerate(rec["actual_order"])}
-    for head_id, ans in dep_res["answers"].items():
-        m = re.match(r"^p_(\d+)_(\d+)$", head_id)
-        if not m:
-            continue
-        i, j = int(m.group(1)), int(m.group(2))
-        ci, cj = f"C{i}", f"C{j}"
-        if ci not in pos or cj not in pos:
-            continue  # no ground truth while one side never landed
-        sha = dep_res.get("sha_by_head", {}).get(head_id, dep_res["sha256"])
-        record_feedback(
-            input_sha256=sha, task="plan_deps", head_id=head_id,
-            predicted_label=ans.get("label"), predicted_confidence=ans.get("confidence"),
-            provider=provider_deps,
-            actual_label=f"c{i}_first" if pos[ci] < pos[cj] else f"c{j}_first",
-            escalated=False, cfg=cfg)
-        n += 1
-    return n
-
-
 def render_report(plan_path: Path, repo_root: Path, since: str, artifact: dict,
                   rec: dict, commit_index: dict[str, dict]) -> str:
     L: list[str] = []
@@ -246,12 +180,9 @@ def main() -> int:
             label = (attr_res["answers"].get(f"a{k}_crit") or {}).get("label")
             if label and label != "none":
                 attributed[c["sha"]] = label
-    rec = ps.reconcile(artifact, commits, attributed=attributed or None)
+    graded = ps.grade_and_record(artifact, commits, map_res, dep_res, attributed=attributed or None, cfg=cfg)
+    rec, n_feedback = graded["reconcile"], graded["feedback_rows"]
     commit_index = {c["sha"]: c for c in commits}
-    for c in rec["mapping"]:  # attach files so the report + feedback can use them
-        c["files"] = commit_index.get(c["sha"], {}).get("files", [])
-
-    n_feedback = write_feedback(artifact, map_res, dep_res, rec, cfg)
 
     out_dir = Path(args.out).expanduser() if args.out else DEFAULT_OUT_DIR
     out_dir.mkdir(parents=True, exist_ok=True)

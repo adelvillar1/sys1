@@ -577,3 +577,88 @@ def reconcile(artifact: dict, commits: list[dict], *,
         "at_threshold": full,
         "sweep": sweep,
     }
+
+
+# ── grading with calibration rows ────────────────────────────────────────────
+
+
+def _actual_module(node: dict, files: list[str]) -> str | None:
+    """Module of the criterion whose mapped paths take the most commit files."""
+    counts: dict[str, int] = {}
+    for m in node.get("modules", []):
+        p = m["path"]
+        counts[m["id"]] = sum(1 for f in files if f == p or f.startswith(p + "/"))
+    best = max(counts.items(), key=lambda kv: kv[1]) if counts else None
+    return best[0] if best and best[1] > 0 else None
+
+
+def grade_and_record(artifact: dict, commits: list[dict], map_res: dict, dep_res: dict,
+                     *, attributed: dict[str, str] | None = None, cfg: dict | None = None) -> dict:
+    """
+    Reconcile a surface against the commit sequence AND write the per-head
+    feedback rows (plan_surface_map / plan_deps) to the calibration log.
+    `commits` is the load_commits shape (oldest first). Shared by the
+    probe script and the dev-decisions plan-reconcile command.
+    """
+    from .telemetry import record_feedback
+
+    rec = reconcile(artifact, commits, attributed=attributed)
+    commit_index = {c["sha"]: c for c in commits}
+    for c in rec["mapping"]:
+        c.setdefault("files", commit_index.get(c["sha"], {}).get("files", []))
+
+    provider_map = artifact["meta"].get("provider_map") or map_res.get("provider", "")
+    provider_deps = artifact["meta"].get("provider_deps") or dep_res.get("provider", "")
+    by_criterion: dict[str, list[dict]] = {}
+    implemented: set[str] = set()
+    for c in rec["mapping"]:
+        by_criterion.setdefault(c["criterion"], []).append(c)
+        implemented.add(c["criterion"])
+    n = 0
+
+    for node in artifact["criteria"]:
+        i = int(node["id"][1:])
+        ans_mod = map_res["answers"].get(f"c{i}_modules") or {}
+        if ans_mod:
+            files = [f for c in by_criterion.get(node["id"], []) for f in c.get("files", [])]
+            if files:
+                actual = _actual_module(node, files)
+                if actual:
+                    record_feedback(
+                        input_sha256=map_res["sha256"], task="plan_surface_map",
+                        head_id=f"c{i}_modules", predicted_label=ans_mod.get("label"),
+                        predicted_confidence=ans_mod.get("confidence"), provider=provider_map,
+                        actual_label=actual, escalated=False, cfg=cfg)
+                    n += 1
+        ans_any = map_res["answers"].get(f"c{i}_any") or {}
+        p_any = ans_any.get("noul") if isinstance(ans_any.get("noul"), (int, float)) else None
+        if p_any is not None:
+            yes = p_any >= 0.5
+            record_feedback(
+                input_sha256=map_res["sha256"], task="plan_surface_map",
+                head_id=f"c{i}_any", predicted_label="yes" if yes else "no",
+                predicted_confidence=round(p_any if yes else 1 - p_any, 3),
+                provider=provider_map,
+                actual_label="yes" if node["id"] in implemented else "no",
+                escalated=False, cfg=cfg)
+            n += 1
+
+    pos = {nid: k for k, nid in enumerate(rec["actual_order"])}
+    for head_id, ans in dep_res["answers"].items():
+        m = re.match(r"^p_(\d+)_(\d+)$", head_id)
+        if not m or not isinstance(ans, dict):
+            continue
+        i, j = int(m.group(1)), int(m.group(2))
+        ci, cj = f"C{i}", f"C{j}"
+        if ci not in pos or cj not in pos:
+            continue  # no ground truth while one side never landed
+        sha = dep_res.get("sha_by_head", {}).get(head_id, dep_res.get("sha256", ""))
+        record_feedback(
+            input_sha256=sha, task="plan_deps", head_id=head_id,
+            predicted_label=ans.get("label"), predicted_confidence=ans.get("confidence"),
+            provider=provider_deps,
+            actual_label=f"c{i}_first" if pos[ci] < pos[cj] else f"c{j}_first",
+            escalated=False, cfg=cfg)
+        n += 1
+
+    return {"reconcile": rec, "feedback_rows": n}

@@ -185,10 +185,12 @@ def kill_sets(matrix: dict, test_ids: list[str]) -> dict[str, set[str]]:
     return out
 
 
-def jaccard(a: set, b: set) -> float:
-    if not a and not b:
-        return 1.0
-    return len(a & b) / len(a | b)
+def redundant_pair(a: set, b: set) -> bool:
+    """Ground truth for the redundancy layer: B is redundant given A iff
+    everything B kills, A also kills (deleting B loses no coverage), or the
+    reverse. Directed subsumption, not Jaccard — shared kills mean both tests
+    are deep, not that they test the same behavior (graded finding 2026-10-02)."""
+    return bool(a) and bool(b) and (b <= a or a <= b)
 
 
 def handcheck(matrix: dict, module_file: Path, test_file: Path, n: int = 3) -> list[dict]:
@@ -226,7 +228,6 @@ def main() -> int:
     ap.add_argument("--module", required=True)
     ap.add_argument("--tests", required=True)
     ap.add_argument("--provider", default="jev")
-    ap.add_argument("--jaccard", type=float, default=0.5, help="ground-truth redundancy cut")
     ap.add_argument("--redundant-noul", type=float, default=0.7, help="layer redundancy cut")
     ap.add_argument("--skip-handcheck", action="store_true")
     ap.add_argument("--out-dir", default=None)
@@ -307,13 +308,13 @@ def main() -> int:
     for p in pairs:
         a = red["answers"].get(f"r{p['index']}_same") or {}
         p_ = noul(a)
-        jac = jaccard(kills.get(p["a"], set()), kills.get(p["b"], set()))
+        sub = redundant_pair(kills.get(p["a"], set()), kills.get(p["b"], set()))
         c_rows.append({"pair": f"{p['a']} + {p['b']}", "function": p["function"],
                        "noul": round(p_, 3) if p_ is not None else None,
-                       "jaccard": round(jac, 3)})
-    tp = sum(1 for r in c_rows if (r["noul"] or 0) >= args.redundant_noul and r["jaccard"] >= args.jaccard)
-    fp = sum(1 for r in c_rows if (r["noul"] or 0) >= args.redundant_noul and r["jaccard"] < args.jaccard)
-    fn = sum(1 for r in c_rows if (r["noul"] or 0) < args.redundant_noul and r["jaccard"] >= args.jaccard)
+                       "subsumes": sub})
+    tp = sum(1 for r in c_rows if (r["noul"] or 0) >= args.redundant_noul and r["subsumes"])
+    fp = sum(1 for r in c_rows if (r["noul"] or 0) >= args.redundant_noul and not r["subsumes"])
+    fn = sum(1 for r in c_rows if (r["noul"] or 0) < args.redundant_noul and r["subsumes"])
 
     # Layer A: judged behaviors whose function's tests kill mutants = carried claims
     a_rows = []
@@ -345,7 +346,7 @@ def main() -> int:
                             task="test_redundancy", head_id=f"r{p['index']}_same",
                             predicted_label="yes" if (noul(a) or 0) >= 0.5 else "no",
                             predicted_confidence=noul(a), provider=red["provider"],
-                            actual_label="yes" if row["jaccard"] >= args.jaccard else "no",
+                            actual_label="yes" if row["subsumes"] else "no",
                             escalated=False, cfg=cfg)
             n_feedback += 1
     for c, row in zip(cands, a_rows):
@@ -386,16 +387,16 @@ def main() -> int:
              f"judged contract with zero kills (real tautology misses): **{contract_but_zero}**")
     L.append(f"zero-kill tests: {', '.join(zero_kill_tests) or '(none)'}")
     L.append("")
-    L.append("## Layer C: redundancy vs kill-set Jaccard")
+    L.append("## Layer C: redundancy vs kill-set subsumption")
     L.append("")
-    L.append("| pair | function | noul | jaccard |")
-    L.append("|------|----------|------|---------|")
+    L.append("| pair | function | noul | subsumes |")
+    L.append("|------|----------|------|----------|")
     for r in c_rows:
-        L.append(f"| {r['pair']} | {r['function']} | {r['noul']} | {r['jaccard']} |")
+        L.append(f"| {r['pair']} | {r['function']} | {r['noul']} | {r['subsumes']} |")
     L.append("")
     prec = round(tp / (tp + fp), 2) if (tp + fp) else None
     rec = round(tp / (tp + fn), 2) if (tp + fn) else None
-    L.append(f"at noul>={args.redundant_noul} vs jaccard>={args.jaccard}: "
+    L.append(f"at noul>={args.redundant_noul} vs kill-set subsumption: "
              f"precision {prec} (tp={tp}, fp={fp}), recall {rec} (fn={fn})")
     L.append("")
     L.append("## Layer A: behavior inventory")
@@ -417,7 +418,7 @@ def main() -> int:
     report_path.write_text("\n".join(L))
     print(f"[probe] layer B: tautological&zero-kill={flagged_zero}, flagged-but-kills={flagged_but_kills}, "
           f"contract-but-zero={contract_but_zero}")
-    print(f"[probe] layer C: tp={tp} fp={fp} fn={fn} (noul>={args.redundant_noul}, jaccard>={args.jaccard})")
+    print(f"[probe] layer C: tp={tp} fp={fp} fn={fn} (noul>={args.redundant_noul}, subsumption ground truth)")
     print(f"[probe] feedback rows: {n_feedback}")
     print(f"[probe] report: {report_path}")
     return 0

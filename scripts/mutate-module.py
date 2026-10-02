@@ -360,6 +360,11 @@ def main() -> int:
         out_path.write_text(json.dumps({"summary": summary, "mutants": mutants}, indent=2))
         print(f"[mut] score {summary['n_killed']}/{summary['n_mutants']} "
               f"(survived {summary['n_survived']}) -> {out_path}")
+        survivors = [m for m in mutants if not m["killed"]]
+        if survivors:
+            print(f"[mut] survivors for manual triage ({len(survivors)}):")
+            for m in survivors:
+                print(f"  {m['id']} {m['function']}:{m['lineno']} {m['description']}")
     return 0
 
 

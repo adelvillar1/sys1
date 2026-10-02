@@ -17,6 +17,7 @@ from sys1.types import Provider
 from sys1.plansurface import (
     assemble,
     build_attribution_task,
+    grade_and_record,
     build_dep_tasks,
     build_map_task,
     inventory_surface,
@@ -334,3 +335,55 @@ class TestRunWiring:
         map_res = run_map(criteria, modules, provider=["nope_missing", STUB], cfg=cfg)
         assert map_res["provider"] == STUB
         assert map_res["answers"]
+
+
+class TestGradeAndRecord:
+    def test_writes_feedback_rows(self, cfg, ps_stub):
+        import json
+        from sys1.plansurface import run_map
+
+        criteria = parse_criteria(PLAN_MD)[:2]
+        modules = [{"id": "m001", "path": "src", "n_files": 4, "langs": "py"}]
+        map_res = run_map(criteria, modules, provider=STUB, cfg=cfg)
+        dep_res = run_deps(criteria, provider=STUB, cfg=cfg)
+        art = assemble(map_res, dep_res, criteria, modules)
+
+        commits = [
+            {"sha": "b1", "ts": "2026-10-01T10:00:00+00:00", "message": "feat: src work",
+             "files": ["src/store.py"]},
+            {"sha": "b2", "ts": "2026-10-01T11:00:00+00:00", "message": "feat: web work",
+             "files": ["web/page.tsx"]},
+        ]
+        graded = grade_and_record(art, commits, map_res, dep_res, cfg=cfg)
+        assert graded["feedback_rows"] >= 2  # c0_any + c1_any at minimum; deps pairs when both land
+        rec = graded["reconcile"]
+        assert rec["actual_order"]
+
+        # rows landed in the pinned log dir under op=feedback
+        log_files = list(Path(cfg["classify"]["log_dir"]).rglob("events.jsonl"))
+        rows = []
+        for f in log_files:
+            rows += [json.loads(ln) for ln in f.read_text().splitlines() if ln.strip()]
+        fb = [r for r in rows if r.get("op") == "feedback" and r.get("task") in ("plan_surface_map", "plan_deps")]
+        assert len(fb) == graded["feedback_rows"]
+        assert all("head_id" in r and "actual" in r for r in fb)
+
+    def test_deps_ground_truth_skips_unimplemented(self, cfg, ps_stub):
+        # only one criterion implemented -> its dep pair has no ground truth
+        import json
+        from sys1.plansurface import run_map
+
+        criteria = parse_criteria(PLAN_MD)[:2]
+        modules = [{"id": "m001", "path": "src", "n_files": 4, "langs": "py"}]
+        map_res = run_map(criteria, modules, provider=STUB, cfg=cfg)
+        dep_res = run_deps(criteria, provider=STUB, cfg=cfg)
+        art = assemble(map_res, dep_res, criteria, modules)
+        commits = [{"sha": "b1", "ts": "2026-10-01T10:00:00+00:00", "message": "feat: src work",
+                    "files": ["src/store.py"]}]
+        graded = grade_and_record(art, commits, map_res, dep_res, cfg=cfg)
+        assert graded["reconcile"]["criteria_unimplemented"]
+        log_files = list(Path(cfg["classify"]["log_dir"]).rglob("events.jsonl"))
+        rows = []
+        for f in log_files:
+            rows += [json.loads(ln) for ln in f.read_text().splitlines() if ln.strip()]
+        assert all(r.get("task") != "plan_deps" for r in rows if r.get("op") == "feedback")
