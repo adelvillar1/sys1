@@ -1,0 +1,160 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 860" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
+    </marker>
+    <marker id="arrPink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#db2777"/>
+    </marker>
+  </defs>
+
+  <rect width="1240" height="860" fill="#f8fafc"/>
+
+  <text x="40" y="52" font-size="26" font-weight="700" fill="#0f172a">sys1 — one judgment API</text>
+  <text x="40" y="78" font-size="14" fill="#475569">language in, probability out — same call from CLI, git hooks, gates, an HTTP service, and any language that speaks JSON</text>
+
+  <!-- ── entry points ─────────────────────────────────────────────────── -->
+  <rect x="40" y="100" width="272" height="96" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+  <circle cx="60" cy="126" r="5" fill="#2563eb"/>
+  <text x="74" y="131" font-size="15" font-weight="700" fill="#0f172a">your code</text>
+  <text x="60" y="156" font-size="12" fill="#334155">sys1.classify(provider, task, text)</text>
+  <text x="60" y="176" font-size="11" fill="#94a3b8">or your own Task via TOML / register()</text>
+
+  <rect x="332" y="100" width="272" height="96" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+  <circle cx="352" cy="126" r="5" fill="#7c3aed"/>
+  <text x="366" y="131" font-size="15" font-weight="700" fill="#0f172a">dev-decisions</text>
+  <text x="352" y="156" font-size="12" fill="#334155">git hooks · gates · plan-surface · uc-gate</text>
+  <text x="352" y="176" font-size="11" fill="#94a3b8">the repo-aware consumer</text>
+
+  <rect x="624" y="100" width="272" height="96" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+  <circle cx="644" cy="126" r="5" fill="#0d9488"/>
+  <text x="658" y="131" font-size="15" font-weight="700" fill="#0f172a">HTTP service</text>
+  <text x="644" y="156" font-size="12" fill="#334155">/v1/classify · /v1/cascade · /dashboard</text>
+  <text x="644" y="176" font-size="11" fill="#94a3b8">any language · bearer-token optional</text>
+
+  <rect x="916" y="100" width="284" height="96" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+  <circle cx="936" cy="126" r="5" fill="#d97706"/>
+  <text x="950" y="131" font-size="15" font-weight="700" fill="#0f172a">sys1 CLI</text>
+  <text x="936" y="156" font-size="12" fill="#334155">classify · doctor · providers · tasks</text>
+  <text x="936" y="176" font-size="11" fill="#94a3b8">local GLiNER venv · classifier server</text>
+
+  <line x1="176" y1="196" x2="176" y2="240" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="468" y1="196" x2="468" y2="240" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="760" y1="196" x2="760" y2="240" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="1058" y1="196" x2="1058" y2="240" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ── classify pipeline ────────────────────────────────────────────── -->
+  <rect x="40" y="244" width="1160" height="300" rx="16" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="64" y="278" font-size="17" font-weight="700" fill="#0f172a">classify() — resolve → route → call → parse → gate → log</text>
+
+  <!-- 1 task registry -->
+  <text x="64" y="310" font-size="14" font-weight="700" fill="#2563eb">① task registry</text>
+  <g font-size="11">
+    <rect x="64"  y="322" width="88" height="24" rx="12" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="108" y="338" text-anchor="middle">change</text>
+    <rect x="160" y="322" width="88" height="24" rx="12" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="204" y="338" text-anchor="middle">commit_audit</text>
+    <rect x="256" y="322" width="88" height="24" rx="12" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="300" y="338" text-anchor="middle">deps_risk</text>
+    <rect x="64"  y="354" width="88" height="24" rx="12" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="108" y="370" text-anchor="middle">pr_gate</text>
+    <rect x="160" y="354" width="88" height="24" rx="12" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="204" y="370" text-anchor="middle">safety</text>
+    <rect x="256" y="354" width="88" height="24" rx="12" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="300" y="370" text-anchor="middle">+ your own</text>
+  </g>
+  <text x="64" y="408" font-size="11.5" fill="#64748b">TOML / JSON loader · per-provider heads</text>
+  <text x="64" y="426" font-size="11.5" fill="#64748b">per-head confidence floors</text>
+
+  <!-- 2 routing -->
+  <text x="384" y="310" font-size="14" font-weight="700" fill="#059669">② routing</text>
+  <text x="384" y="334" font-size="12" fill="#334155">auto → roster: glide, drex, jev</text>
+  <text x="384" y="354" font-size="11.5" fill="#64748b">size gate · by_task overrides</text>
+  <text x="384" y="372" font-size="11.5" fill="#64748b">availability + flags · julia excluded</text>
+  <text x="384" y="390" font-size="11.5" fill="#64748b">candidates opt-in (clm, kev, tev1 …)</text>
+  <text x="384" y="408" font-size="11.5" fill="#64748b">enabled/disabled flags + state.json</text>
+  <text x="384" y="426" font-size="11.5" fill="#64748b">route.enabled=false → legacy chain</text>
+
+  <!-- 3 wires -->
+  <text x="704" y="310" font-size="14" font-weight="700" fill="#7c3aed">③ wire adapters</text>
+  <g font-size="11">
+    <rect x="704" y="322" width="76" height="24" rx="12" fill="#faf5ff" stroke="#e9d5ff"/>
+    <text x="742" y="338" text-anchor="middle">_jev</text>
+    <rect x="788" y="322" width="76" height="24" rx="12" fill="#faf5ff" stroke="#e9d5ff"/>
+    <text x="826" y="338" text-anchor="middle">_drex</text>
+    <rect x="872" y="322" width="76" height="24" rx="12" fill="#faf5ff" stroke="#e9d5ff"/>
+    <text x="910" y="338" text-anchor="middle">_glide</text>
+    <rect x="956" y="322" width="76" height="24" rx="12" fill="#faf5ff" stroke="#e9d5ff"/>
+    <text x="994" y="338" text-anchor="middle">_julia</text>
+    <rect x="1040" y="322" width="76" height="24" rx="12" fill="#faf5ff" stroke="#e9d5ff"/>
+    <text x="1078" y="338" text-anchor="middle">openai</text>
+    <rect x="704" y="354" width="88" height="24" rx="12" fill="#faf5ff" stroke="#e9d5ff"/>
+    <text x="748" y="370" text-anchor="middle">gliner local</text>
+    <rect x="800" y="354" width="88" height="24" rx="12" fill="#faf5ff" stroke="#e9d5ff"/>
+    <text x="844" y="370" text-anchor="middle">modernbert</text>
+  </g>
+  <text x="704" y="408" font-size="11.5" fill="#64748b">choice / score / noul · normalized Answer dict</text>
+  <text x="704" y="426" font-size="11.5" fill="#64748b">confidence semantics per family, documented</text>
+
+  <!-- 4 gating + parse -->
+  <text x="64" y="466" font-size="14" font-weight="700" fill="#dc2626">④ gating → verdict</text>
+  <text x="64" y="490" font-size="11.5" fill="#64748b">conf ≥ floor (per head → task → provider)</text>
+  <text x="64" y="508" font-size="11.5" fill="#64748b">noul gates on max(p, 1−p)</text>
+  <text x="64" y="526" font-size="11.5" fill="#64748b">pass / escalate / block · declined escalates</text>
+
+  <!-- side modules -->
+  <rect x="384" y="452" width="288" height="76" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="400" y="476" font-size="12" font-weight="700" fill="#334155">consistency_classify</text>
+  <text x="400" y="494" font-size="11" fill="#64748b">n draws · band the signal · route the middle</text>
+  <text x="400" y="512" font-size="11" fill="#64748b">cascade_classify: chain, stop when clear</text>
+
+  <rect x="704" y="452" width="456" height="76" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="720" y="476" font-size="12" font-weight="700" fill="#334155">plansurface — layered precompute for plan decomposition</text>
+  <text x="720" y="494" font-size="11" fill="#64748b">criteria→modules · pairwise deps · DAG + uncertain band</text>
+  <text x="720" y="512" font-size="11" fill="#64748b">reconcile vs commits (tau, precision) · grade_and_record</text>
+
+  <!-- ── bottom: telemetry + feedback ─────────────────────────────────── -->
+  <line x1="320" y1="544" x2="320" y2="588" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="930" y1="544" x2="930" y2="588" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <rect x="40" y="592" width="560" height="130" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+  <circle cx="60" cy="620" r="5" fill="#db2777"/>
+  <text x="74" y="625" font-size="15" font-weight="700" fill="#0f172a">JSONL decision log</text>
+  <text x="60" y="652" font-size="12" fill="#334155">~/.local/share/sys1/logs/YYYY/MM/DD/events.jsonl</text>
+  <text x="60" y="672" font-size="11.5" fill="#64748b">op · task · provider · answers · verdict · latency · telemetry</text>
+  <text x="60" y="692" font-size="11.5" fill="#64748b">record_feedback() joins graded outcomes by input_sha256</text>
+  <text x="60" y="712" font-size="10.5" fill="#94a3b8" letter-spacing="1">ALWAYS APPENDED · NEVER RAISES · REDACTED</text>
+
+  <rect x="640" y="592" width="560" height="130" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+  <circle cx="660" cy="620" r="5" fill="#059669"/>
+  <text x="674" y="625" font-size="15" font-weight="700" fill="#0f172a">calibration loop</text>
+  <text x="660" y="652" font-size="12" fill="#334155">calibration_curve(): confidence vs correctness, per provider</text>
+  <text x="660" y="672" font-size="12" fill="#334155">provider_agreement(): cross-provider reconciliation</text>
+  <text x="660" y="692" font-size="11.5" fill="#64748b">floors fit only when a head qualifies — thresholds don't transfer</text>
+  <text x="660" y="712" font-size="10.5" fill="#94a3b8" letter-spacing="1">THE GRADING DATASET IS THE MOAT</text>
+
+  <!-- feedback arrow -->
+  <path d="M 1224 657 L 1226 657 L 1226 394 L 1206 394" fill="none" stroke="#db2777" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arrPink)"/>
+  <text transform="rotate(-90 1240 525)" x="1240" y="525" text-anchor="middle" font-size="11" fill="#db2777">graded outcomes feed back into floors</text>
+
+  <!-- providers strip -->
+  <text x="40" y="762" font-size="13" font-weight="700" fill="#94a3b8" letter-spacing="1">CORE PROVIDERS</text>
+  <g font-size="12" font-weight="600">
+    <rect x="180" y="746" width="150" height="26" rx="13" fill="#ecfdf5" stroke="#a7f3d0"/>
+    <text x="255" y="763" text-anchor="middle" fill="#047857">glide (default head)</text>
+    <rect x="344" y="746" width="130" height="26" rx="13" fill="#ecfdf5" stroke="#a7f3d0"/>
+    <text x="409" y="763" text-anchor="middle" fill="#047857">drex (400k ctx)</text>
+    <rect x="488" y="746" width="110" height="26" rx="13" fill="#ecfdf5" stroke="#a7f3d0"/>
+    <text x="543" y="763" text-anchor="middle" fill="#047857">jev</text>
+    <rect x="612" y="746" width="150" height="26" rx="13" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="687" y="763" text-anchor="middle" fill="#475569">decide (chat wire)</text>
+    <rect x="776" y="746" width="110" height="26" rx="13" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="831" y="763" text-anchor="middle" fill="#475569">local GLiNER</text>
+    <rect x="900" y="746" width="130" height="26" rx="13" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="965" y="763" text-anchor="middle" fill="#475569">modernbert (eval)</text>
+    <rect x="1044" y="746" width="156" height="26" rx="13" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="1122" y="763" text-anchor="middle" fill="#b45309">julia (calibrated out)</text>
+  </g>
+  <text x="40" y="800" font-size="11.5" fill="#94a3b8">candidates opt-in: clm · openjev · kev · tev1 · laya · decide_1b · decide_multi — providers.enabled / disabled flags, dashboard toggles</text>
+  <text x="40" y="822" font-size="11.5" fill="#94a3b8">stdlib-only runtime — urllib for hosted wires, subprocess for local venvs · FastAPI service is opt-in</text>
+</svg>

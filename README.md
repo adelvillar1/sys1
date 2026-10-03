@@ -45,6 +45,8 @@ and into a *decision contract* is the criteria.
 | HTTP service | `service/main.py` | FastAPI wrapper, same API, any language |
 | `sys1` CLI | `cli.py` | `classify`, `doctor`, `providers`, `tasks`, `version` |
 
+![sys1 — how a judgment flows](docs/architecture-flow.svg)
+
 The library is **stdlib-only** at runtime. `urllib` for HTTP providers,
 `subprocess` for the local GLiNER venv. `pip install sys1` adds no hard
 dependencies; FastAPI is opt-in via `pip install 'sys1[service]'`.
