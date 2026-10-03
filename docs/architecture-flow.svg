@@ -148,8 +148,8 @@
     <text x="543" y="763" text-anchor="middle" fill="#047857">jev</text>
     <rect x="612" y="746" width="150" height="26" rx="13" fill="#f8fafc" stroke="#cbd5e1"/>
     <text x="687" y="763" text-anchor="middle" fill="#475569">decide (chat wire)</text>
-    <rect x="776" y="746" width="110" height="26" rx="13" fill="#f8fafc" stroke="#cbd5e1"/>
-    <text x="831" y="763" text-anchor="middle" fill="#475569">local GLiNER</text>
+    <rect x="776" y="746" width="130" height="26" rx="13" fill="#f8fafc" stroke="#cbd5e1" stroke-dasharray="4 3"/>
+    <text x="841" y="763" text-anchor="middle" fill="#475569">local venv (unused)</text>
     <rect x="900" y="746" width="130" height="26" rx="13" fill="#f8fafc" stroke="#cbd5e1"/>
     <text x="965" y="763" text-anchor="middle" fill="#475569">modernbert (eval)</text>
     <rect x="1044" y="746" width="156" height="26" rx="13" fill="#fffbeb" stroke="#fde68a"/>
