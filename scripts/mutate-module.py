@@ -106,7 +106,7 @@ def mutation_sites(tree: ast.AST) -> list[dict]:
             walk_pairs(child)
 
     walk_pairs(tree)
-    for pid, (parent, stmt) in parents.items():
+    for _pid, (parent, stmt) in parents.items():
         if isinstance(stmt, ast.stmt) and _drop_ok(parent, stmt):
             ln, col = parents[id(parent)][1].lineno, 0  # attribute to the owner
             sites.append({"lineno": getattr(stmt, "lineno", ln), "col": getattr(stmt, "col_offset", 0),
@@ -208,7 +208,7 @@ def apply_mutation(source: str, lineno: int, col: int, op: str) -> str | None:
                 if not matched and op == "neg" and node.ifs \
                         and (node.ifs[0].lineno, node.ifs[0].col_offset) == (lineno, col):
                     matched = True
-                    node.ifs = [ast.UnaryOp(op=ast.Not(), operand=node.ifs[0])] + node.ifs[1:]
+                    node.ifs = [ast.UnaryOp(op=ast.Not(), operand=node.ifs[0]), *node.ifs[1:]]
                 return node
 
         tree = OneShot().visit(tree)

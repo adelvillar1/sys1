@@ -28,19 +28,23 @@ import datetime
 import itertools
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
-import shutil
 from pathlib import Path
+
+from probe_lib import (
+    chunked,
+    first_answers,
+    load_module_by_path,
+    sha8,
+    span_source,
+)
 
 import sys1
 from sys1.telemetry import record_feedback
 from sys1.types import Task, make_choice, make_noul
-
-from probe_lib import (
-    chunked, first_answers, load_module_by_path, sha8, span_source,
-)
 
 DEFAULT_OUT_DIR = Path.home() / ".local/share/sys1/probes"
 PAIRS_PER_REQUEST = 14
@@ -63,7 +67,6 @@ def extract_functions(module_src: str, names: list[str]) -> dict[str, str]:
 def extract_tests(test_src: str) -> dict[str, str]:
     """Test id -> source segment (Class.method flattened to method)."""
     tree = ast.parse(test_src)
-    lines = test_src.splitlines(keepends=True)
     out: dict[str, str] = {}
     for node in tree.body:
         if isinstance(node, ast.ClassDef):
@@ -339,7 +342,7 @@ def main() -> int:
                             predicted_label=a.get("label"), predicted_confidence=a.get("confidence"),
                             provider=taut["provider"], actual_label=actual, escalated=False, cfg=cfg)
             n_feedback += 1
-    for p, row in zip(pairs, c_rows):
+    for p, row in zip(pairs, c_rows, strict=True):
         a = red["answers"].get(f"r{p['index']}_same") or {}
         if a and noul(a) is not None:
             record_feedback(input_sha256=red["sha_by_head"].get(f"r{p['index']}_same", ""),
@@ -349,7 +352,7 @@ def main() -> int:
                             actual_label="yes" if row["subsumes"] else "no",
                             escalated=False, cfg=cfg)
             n_feedback += 1
-    for c, row in zip(cands, a_rows):
+    for c, row in zip(cands, a_rows, strict=True):
         a = beh["answers"].get(f"b{c['index']}_is_behavior") or {}
         if a and noul(a) is not None:
             record_feedback(input_sha256=beh["sha_by_head"].get(f"b{c['index']}_is_behavior", ""),
@@ -363,59 +366,59 @@ def main() -> int:
     checks = [] if args.skip_handcheck else handcheck(matrix, module_file, test_file)
 
     # ── report ───────────────────────────────────────────────────────────────
-    L: list[str] = []
-    L.append(f"# test-surface probe: {module_file.name}")
-    L.append("")
-    L.append(f"- provider: {args.provider} (A={beh['provider']}, B={taut['provider']}, C={red['provider']})")
-    L.append(f"- mutation: {matrix['summary']['n_killed']}/{matrix['summary']['n_mutants']} killed "
+    report_lines: list[str] = []
+    report_lines.append(f"# test-surface probe: {module_file.name}")
+    report_lines.append("")
+    report_lines.append(f"- provider: {args.provider} (A={beh['provider']}, B={taut['provider']}, C={red['provider']})")
+    report_lines.append(f"- mutation: {matrix['summary']['n_killed']}/{matrix['summary']['n_mutants']} killed "
              f"(score {matrix['summary']['mutation_score']}), {matrix['summary']['n_survived']} survived "
              f"(presumed equivalent, excluded from tautology ground truth)")
-    L.append(f"- tests: {len(tests)}, kill-attributed: {sum(1 for k in kills.values() if k)}")
+    report_lines.append(f"- tests: {len(tests)}, kill-attributed: {sum(1 for k in kills.values() if k)}")
     if checks:
-        L.append(f"- hand-check: {sum(1 for c in checks if c['reproduced'])}/{len(checks)} kills reproduced "
+        report_lines.append(f"- hand-check: {sum(1 for c in checks if c['reproduced'])}/{len(checks)} kills reproduced "
                  f"({', '.join(c['mutant'] for c in checks)})")
-    L.append("")
-    L.append("## Layer B: tautology gate vs kill counts")
-    L.append("")
-    L.append("| test | layer verdict | conf | mutants killed |")
-    L.append("|------|---------------|------|----------------|")
+    report_lines.append("")
+    report_lines.append("## Layer B: tautology gate vs kill counts")
+    report_lines.append("")
+    report_lines.append("| test | layer verdict | conf | mutants killed |")
+    report_lines.append("|------|---------------|------|----------------|")
     for r in b_rows:
-        L.append(f"| {r['test']} | {r['verdict']} | {r['confidence']} | {r['kills']} |")
-    L.append("")
-    L.append(f"flagged tautological AND zero kills: **{flagged_zero}**; "
+        report_lines.append(f"| {r['test']} | {r['verdict']} | {r['confidence']} | {r['kills']} |")
+    report_lines.append("")
+    report_lines.append(f"flagged tautological AND zero kills: **{flagged_zero}**; "
              f"flagged tautological but kills mutants (layer wrong or equivalent survivors): **{flagged_but_kills}**; "
              f"judged contract with zero kills (real tautology misses): **{contract_but_zero}**")
-    L.append(f"zero-kill tests: {', '.join(zero_kill_tests) or '(none)'}")
-    L.append("")
-    L.append("## Layer C: redundancy vs kill-set subsumption")
-    L.append("")
-    L.append("| pair | function | noul | subsumes |")
-    L.append("|------|----------|------|----------|")
+    report_lines.append(f"zero-kill tests: {', '.join(zero_kill_tests) or '(none)'}")
+    report_lines.append("")
+    report_lines.append("## Layer C: redundancy vs kill-set subsumption")
+    report_lines.append("")
+    report_lines.append("| pair | function | noul | subsumes |")
+    report_lines.append("|------|----------|------|----------|")
     for r in c_rows:
-        L.append(f"| {r['pair']} | {r['function']} | {r['noul']} | {r['subsumes']} |")
-    L.append("")
+        report_lines.append(f"| {r['pair']} | {r['function']} | {r['noul']} | {r['subsumes']} |")
+    report_lines.append("")
     prec = round(tp / (tp + fp), 2) if (tp + fp) else None
     rec = round(tp / (tp + fn), 2) if (tp + fn) else None
-    L.append(f"at noul>={args.redundant_noul} vs kill-set subsumption: "
+    report_lines.append(f"at noul>={args.redundant_noul} vs kill-set subsumption: "
              f"precision {prec} (tp={tp}, fp={fp}), recall {rec} (fn={fn})")
-    L.append("")
-    L.append("## Layer A: behavior inventory")
-    L.append("")
-    L.append("| function | candidate behavior | noul | function's tests kill N mutants |")
-    L.append("|----------|--------------------|------|--------------------------------|")
+    report_lines.append("")
+    report_lines.append("## Layer A: behavior inventory")
+    report_lines.append("")
+    report_lines.append("| function | candidate behavior | noul | function's tests kill N mutants |")
+    report_lines.append("|----------|--------------------|------|--------------------------------|")
     for r in a_rows:
-        L.append(f"| {r['function']} | {r['behavior'][:80]} | {r['noul']} | {r['function_kills']} |")
-    L.append("")
-    L.append(f"judged behaviors: {a_yes}/{len(a_rows)}")
-    L.append("")
-    L.append(f"feedback rows written: {n_feedback}")
-    L.append("")
+        report_lines.append(f"| {r['function']} | {r['behavior'][:80]} | {r['noul']} | {r['function_kills']} |")
+    report_lines.append("")
+    report_lines.append(f"judged behaviors: {a_yes}/{len(a_rows)}")
+    report_lines.append("")
+    report_lines.append(f"feedback rows written: {n_feedback}")
+    report_lines.append("")
 
     out_dir = Path(args.out_dir).expanduser() if args.out_dir else DEFAULT_OUT_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     report_path = out_dir / f"test-surface-{module_file.stem}-{stamp}.md"
-    report_path.write_text("\n".join(L))
+    report_path.write_text("\n".join(report_lines))
     print(f"[probe] layer B: tautological&zero-kill={flagged_zero}, flagged-but-kills={flagged_but_kills}, "
           f"contract-but-zero={contract_but_zero}")
     print(f"[probe] layer C: tp={tp} fp={fp} fn={fn} (noul>={args.redundant_noul}, subsumption ground truth)")

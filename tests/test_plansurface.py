@@ -13,13 +13,12 @@ from pathlib import Path
 import pytest
 
 import sys1
-from sys1.types import Provider
 from sys1.plansurface import (
     assemble,
     build_attribution_task,
-    grade_and_record,
     build_dep_tasks,
     build_map_task,
+    grade_and_record,
     inventory_surface,
     kendall_tau,
     parse_criteria,
@@ -27,6 +26,7 @@ from sys1.plansurface import (
     run_deps,
     run_map,
 )
+from sys1.types import Provider
 
 PLAN_MD = """\
 ---
@@ -340,6 +340,7 @@ class TestRunWiring:
 class TestGradeAndRecord:
     def test_writes_feedback_rows(self, cfg, ps_stub):
         import json
+
         from sys1.plansurface import run_map
 
         criteria = parse_criteria(PLAN_MD)[:2]
@@ -371,6 +372,7 @@ class TestGradeAndRecord:
     def test_deps_ground_truth_skips_unimplemented(self, cfg, ps_stub):
         # only one criterion implemented -> its dep pair has no ground truth
         import json
+
         from sys1.plansurface import run_map
 
         criteria = parse_criteria(PLAN_MD)[:2]

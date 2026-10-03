@@ -33,7 +33,6 @@ from pathlib import Path
 
 import sys1
 from sys1 import plansurface as ps
-from sys1.telemetry import record_feedback
 
 DEFAULT_OUT_DIR = Path.home() / ".local/share/sys1/probes"
 
@@ -46,75 +45,75 @@ def _frontmatter_created(plan_text: str) -> str | None:
 
 def render_report(plan_path: Path, repo_root: Path, since: str, artifact: dict,
                   rec: dict, commit_index: dict[str, dict]) -> str:
-    L: list[str] = []
-    L.append(f"# plan-surface probe: {plan_path.name}")
-    L.append("")
-    L.append(f"- plan: `{plan_path}`")
-    L.append(f"- repo: `{repo_root}`")
-    L.append(f"- since: {since}")
-    L.append(f"- providers: map={artifact['meta']['provider_map']}, deps={artifact['meta']['provider_deps']}")
-    L.append(f"- criteria: {len(artifact['criteria'])}, edges: {len(artifact['edges'])}, "
+    report_lines: list[str] = []
+    report_lines.append(f"# plan-surface probe: {plan_path.name}")
+    report_lines.append("")
+    report_lines.append(f"- plan: `{plan_path}`")
+    report_lines.append(f"- repo: `{repo_root}`")
+    report_lines.append(f"- since: {since}")
+    report_lines.append(f"- providers: map={artifact['meta']['provider_map']}, deps={artifact['meta']['provider_deps']}")
+    report_lines.append(f"- criteria: {len(artifact['criteria'])}, edges: {len(artifact['edges'])}, "
              f"uncertain: {len(artifact['uncertain'])}, cycle breaks: {len(artifact['cycle_breaks'])}")
-    L.append("")
-    L.append("## Predicted vs actual order")
-    L.append("")
-    L.append("| # | predicted | actual |")
-    L.append("|---|-----------|--------|")
+    report_lines.append("")
+    report_lines.append("## Predicted vs actual order")
+    report_lines.append("")
+    report_lines.append("| # | predicted | actual |")
+    report_lines.append("|---|-----------|--------|")
     for k in range(max(len(artifact["order"]), len(rec["actual_order"]))):
         p = artifact["order"][k] if k < len(artifact["order"]) else ""
         a = rec["actual_order"][k] if k < len(rec["actual_order"]) else ""
-        L.append(f"| {k + 1} | {p} | {a} |")
-    L.append("")
-    L.append(f"Kendall tau: **{rec['tau']}**  (commits used: {rec['commits_used']}, "
+        report_lines.append(f"| {k + 1} | {p} | {a} |")
+    report_lines.append("")
+    report_lines.append(f"Kendall tau: **{rec['tau']}**  (commits used: {rec['commits_used']}, "
              f"skipped by prefix: {rec['commits_skipped_prefix']})")
-    L.append("")
+    report_lines.append("")
     at = rec["at_threshold"]
-    L.append(f"At dep threshold {at['threshold']}: direction precision **{at['direction_precision']}**, "
+    report_lines.append(f"At dep threshold {at['threshold']}: direction precision **{at['direction_precision']}**, "
              f"adjacent coverage **{at['adjacent_coverage']}**")
-    L.append("")
-    L.append("## Threshold sweep")
-    L.append("")
-    L.append("| threshold | edges | direction precision | adjacent coverage |")
-    L.append("|-----------|-------|---------------------|-------------------|")
+    report_lines.append("")
+    report_lines.append("## Threshold sweep")
+    report_lines.append("")
+    report_lines.append("| threshold | edges | direction precision | adjacent coverage |")
+    report_lines.append("|-----------|-------|---------------------|-------------------|")
     for s in rec["sweep"]:
-        L.append(f"| {s['threshold']} | {s['n_edges']} | {s['direction_precision']} | {s['adjacent_coverage']} |")
-    L.append("")
-    L.append("## Dependency edges")
-    L.append("")
+        report_lines.append(f"| {s['threshold']} | {s['n_edges']} | {s['direction_precision']} | {s['adjacent_coverage']} |")
+    report_lines.append("")
+    report_lines.append("## Dependency edges")
+    report_lines.append("")
     for e in artifact["edges"]:
-        L.append(f"- {e['before']} -> {e['after']}  p={e['p']}")
+        report_lines.append(f"- {e['before']} -> {e['after']}  p={e['p']}")
     if artifact["uncertain"]:
-        L.append("")
-        L.append("Uncertain pairs (in band, reported not dropped):")
+        report_lines.append("")
+        report_lines.append("Uncertain pairs (in band, reported not dropped):")
         for u in artifact["uncertain"]:
             pair = u["pair"]
-            L.append("- {} / {}  reading={}  {}".format(pair[0], pair[1], u["reading"], u["probs"]))
+            report_lines.append("- {} / {}  reading={}  {}".format(pair[0], pair[1], u["reading"], u["probs"]))
     if artifact["cycle_breaks"]:
-        L.append("")
+        report_lines.append("")
         for cb in artifact["cycle_breaks"]:
             d = cb["dropped"]
-            L.append(f"- cycle break: dropped {d['before']} -> {d['after']} (p={d['p']})")
-    L.append("")
-    L.append("## Criteria")
-    L.append("")
+            report_lines.append(f"- cycle break: dropped {d['before']} -> {d['after']} (p={d['p']})")
+    report_lines.append("")
+    report_lines.append("## Criteria")
+    report_lines.append("")
     for node in artifact["criteria"]:
         mods = ", ".join(f"{m['path']} ({m['p']})" for m in node["modules"]) or "unmapped"
         risks = f" risks: {', '.join(node['risks'])}" if node["risks"] else ""
-        L.append(f"- {node['id']}: {node['text']}  ->  {mods}{risks}")
-    L.append("")
-    L.append("## Commit -> criterion mapping")
-    L.append("")
-    L.append("| sha | message | criterion | source | files |")
-    L.append("|-----|---------|-----------|--------|-------|")
+        report_lines.append(f"- {node['id']}: {node['text']}  ->  {mods}{risks}")
+    report_lines.append("")
+    report_lines.append("## Commit -> criterion mapping")
+    report_lines.append("")
+    report_lines.append("| sha | message | criterion | source | files |")
+    report_lines.append("|-----|---------|-----------|--------|-------|")
     for c in rec["mapping"]:
         full = commit_index.get(c["sha"], {})
         files = ", ".join(full.get("files", [])[:4])
-        L.append(f"| {c['sha']} | {c['message'][:60]} | {c['criterion']} | {c.get('source', '')} | {files} |")
+        report_lines.append(f"| {c['sha']} | {c['message'][:60]} | {c['criterion']} | {c.get('source', '')} | {files} |")
     if rec["criteria_unimplemented"]:
-        L.append("")
-        L.append(f"No commits mapped: {', '.join(rec['criteria_unimplemented'])}")
-    L.append("")
-    return "\n".join(L)
+        report_lines.append("")
+        report_lines.append(f"No commits mapped: {', '.join(rec['criteria_unimplemented'])}")
+    report_lines.append("")
+    return "\n".join(report_lines)
 
 
 def main() -> int:

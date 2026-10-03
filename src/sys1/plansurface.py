@@ -33,6 +33,7 @@ import os
 import re
 import subprocess
 from collections import Counter, defaultdict
+from itertools import pairwise
 from pathlib import Path
 
 from .api import classify
@@ -91,7 +92,7 @@ def inventory_surface(repo_root: str | Path, max_modules: int = MAX_MODULES) -> 
 
     def code_stats(dirpath: Path) -> tuple[int, Counter]:
         n, exts = 0, Counter()
-        for walk_dir, dirnames, filenames in os.walk(dirpath):
+        for _walk_dir, dirnames, filenames in os.walk(dirpath):
             dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")]
             for fn in filenames:
                 ext = Path(fn).suffix.lower()
@@ -219,7 +220,7 @@ def build_attribution_task(commits: list[dict], criteria: list[str],
             f"Which acceptance criterion does commit {k} (sha {c['sha']}) implement? "
             f"Message: \"{c.get('message', '')}\". Files touched: {files}. "
             "Pick 'none' if it implements none of them or is docs/chore.",
-            crit_ids + ["none"],
+            [*crit_ids, "none"],
             id=f"a{k}_crit",
             descriptions={cid: criteria[i] for i, cid in enumerate(crit_ids)} | {"none": "None of the criteria."},
         ))
@@ -549,7 +550,7 @@ def reconcile(artifact: dict, commits: list[dict], *,
         judged = [e for e in edges.values() if e[0] in pos and e[1] in pos]
         ok = sum(1 for before, after, _ in judged if pos[before] < pos[after])
         transitions = []
-        for x, y in zip(used, used[1:]):
+        for x, y in pairwise(used):
             if x["criterion"] != y["criterion"]:
                 transitions.append((x["criterion"], y["criterion"]))
         covered = sum(
