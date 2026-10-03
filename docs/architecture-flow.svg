@@ -140,21 +140,19 @@
   <!-- providers strip -->
   <text x="40" y="762" font-size="13" font-weight="700" fill="#94a3b8" letter-spacing="1">CORE PROVIDERS</text>
   <g font-size="12" font-weight="600">
-    <rect x="180" y="746" width="150" height="26" rx="13" fill="#ecfdf5" stroke="#a7f3d0"/>
-    <text x="255" y="763" text-anchor="middle" fill="#047857">glide (default head)</text>
-    <rect x="344" y="746" width="130" height="26" rx="13" fill="#ecfdf5" stroke="#a7f3d0"/>
-    <text x="409" y="763" text-anchor="middle" fill="#047857">drex (400k ctx)</text>
-    <rect x="488" y="746" width="110" height="26" rx="13" fill="#ecfdf5" stroke="#a7f3d0"/>
-    <text x="543" y="763" text-anchor="middle" fill="#047857">jev</text>
-    <rect x="612" y="746" width="150" height="26" rx="13" fill="#f8fafc" stroke="#cbd5e1"/>
-    <text x="687" y="763" text-anchor="middle" fill="#475569">decide (chat wire)</text>
-    <rect x="776" y="746" width="130" height="26" rx="13" fill="#f8fafc" stroke="#cbd5e1" stroke-dasharray="4 3"/>
-    <text x="841" y="763" text-anchor="middle" fill="#475569">local venv (unused)</text>
-    <rect x="900" y="746" width="130" height="26" rx="13" fill="#f8fafc" stroke="#cbd5e1"/>
-    <text x="965" y="763" text-anchor="middle" fill="#475569">modernbert (eval)</text>
-    <rect x="1044" y="746" width="156" height="26" rx="13" fill="#fffbeb" stroke="#fde68a"/>
-    <text x="1122" y="763" text-anchor="middle" fill="#b45309">julia (calibrated out)</text>
+    <rect x="180" y="746" width="140" height="26" rx="13" fill="#ecfdf5" stroke="#a7f3d0"/>
+    <text x="250" y="763" text-anchor="middle" fill="#047857">glide (default head)</text>
+    <rect x="330" y="746" width="140" height="26" rx="13" fill="#ecfdf5" stroke="#a7f3d0"/>
+    <text x="400" y="763" text-anchor="middle" fill="#047857">drex (400k ctx)</text>
+    <rect x="480" y="746" width="100" height="26" rx="13" fill="#ecfdf5" stroke="#a7f3d0"/>
+    <text x="530" y="763" text-anchor="middle" fill="#047857">jev</text>
+    <rect x="590" y="746" width="230" height="26" rx="13" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="705" y="763" text-anchor="middle" fill="#475569">gliner2.5-decide (hosted · classify)</text>
+    <rect x="830" y="746" width="200" height="26" rx="13" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="930" y="763" text-anchor="middle" fill="#475569">gliner2.5 (hosted · extract)</text>
+    <rect x="1040" y="746" width="160" height="26" rx="13" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="1120" y="763" text-anchor="middle" fill="#b45309">julia (calibrated out)</text>
   </g>
-  <text x="40" y="800" font-size="11.5" fill="#94a3b8">candidates opt-in: clm · openjev · kev · tev1 · laya · decide_1b · decide_multi — providers.enabled / disabled flags, dashboard toggles</text>
+  <text x="40" y="800" font-size="11.5" fill="#94a3b8">all six hosted APIs — no local models in use · candidates opt-in: clm · openjev · kev · tev1 · laya · decide_1b · decide_multi</text>
   <text x="40" y="822" font-size="11.5" fill="#94a3b8">stdlib-only runtime — urllib for hosted wires, subprocess for local venvs · FastAPI service is opt-in</text>
 </svg>
