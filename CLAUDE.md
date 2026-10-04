@@ -83,10 +83,10 @@ For trivial changes (typos, single-line fixes, dependency bumps), the cycle comp
 
 ## Today's state
 
-- v0.2.0 on `feature/provider-flags-and-dashboard` (provider flags + control dashboard + noul gating/per-head floors/recipe pack + fastino-prescribed local wire), unmerged to `main` (which is at v0.1.0).
-- 276 tests passing, `gating.py` at 100%.
-- Ruff clean (`ruff check .` → 0 errors; the 16 pre-existing errors were fixed 2026-10-01 — E741/F841/SIM115/SIM117/B007/B905/RUF022/RUF046; note `make_score(legend=...)` now raises on a legend/level-count mismatch via `zip(strict=True)`).
-- Roster (2026-10-01): core = decide, jev, drex, glide, local, modernbert; `routing.route()` builds the cascade's default chain (`glide,drex,jev`, size-gated, hosted-only). Plans `2026-09-30-drex-provider` and `2026-10-01-glide-provider-and-router` completed.
+- v0.2.0 on `feature/plan-surface` (continued from `feature/provider-flags-and-dashboard`: provider flags + control dashboard + noul gating/per-head floors/recipe pack + fastino-prescribed local wire + plan-surface layers), unmerged to `main` (which is at v0.1.0).
+- 321 tests passing, `gating.py` at 100% (re-verified 2026-10-04).
+- Ruff clean (`ruff check src tests scripts` → 0 errors; the 16 pre-existing errors were fixed 2026-10-01 — E741/F841/SIM115/SIM117/B007/B905/RUF022/RUF046; note `make_score(legend=...)` now raises on a legend/level-count mismatch via `zip(strict=True)`).
+- Roster (2026-10-02): core = decide, jev, drex, glide, julia, local, modernbert; `routing.route()` builds the cascade's default chain (`glide,drex,jev`, size-gated, hosted-only; julia registered + size-gated but calibrated OUT of the chain). Plans `2026-09-30-drex-provider`, `2026-10-01-glide-provider-and-router`, and `2026-10-02-julia-provider` completed.
 - The 6 defects from the 2026-09-28 review are fixed (plan `2026-09-28-sys1-correctness-fixes` landed as `9e13e16`); the noul-gating plan completed the same day.
 - Active plan: `2026-09-28-fastino-decide-adoption` — sys1 is the one fastino integration; `local` uses the vendor-prescribed `gliner2.classification` API (one decode, full probabilities) with a load-once classifier server (`local_server_url`) or subprocess fallback; the service accepts inline `task_spec`; consumers (dev-decisions, zcode-router) move onto sys1 per the plan. `decide` id = hosted wire; the Decide model is what `local` runs.
 
