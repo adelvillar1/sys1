@@ -32,6 +32,7 @@
 ## Where to find things
 
 **Architecture**
+- Design fragments (per-subsystem, source-cited) → `docs/context/README.md`; start there before touching a subsystem. The `sys1-context` skill loads the right fragment for a file or area.
 - Tech stack & module map → `docs/architecture/overview.md`
 
 **Features**
@@ -58,6 +59,8 @@ Three layers of documentation act as contracts and must stay in sync as the code
 | **Functional reference** | `FUNCTIONAL-SPECIFICATIONS.md` (top level) | Per feature | User-flow contract: gating behavior, CLI commands, service endpoints |
 
 **The cycle is**: draft a plan → implement → write a recap → update the technical and functional contracts. Each phase produces an artifact the next phase consumes.
+
+**Fragment upkeep** runs alongside the cycle: before a push, `bash .agents/skills/sys1-context/scripts/drift.sh` maps changed sources to the `docs/context/` fragments that document them; update the affected fragments and commit docs with the code (same commit). `python3 .agents/skills/sys1-context/scripts/build-map.py` regenerates the index after editing frontmatter. Plans/recaps are never fragments.
 
 For trivial changes (typos, single-line fixes, dependency bumps), the cycle compresses: skip the plan, write a brief recap, no contract-doc updates needed.
 
