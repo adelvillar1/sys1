@@ -27,7 +27,15 @@ this same `classify()`. `pip install 'sys1[service]'` pulls the extras.
 from __future__ import annotations
 
 from .api import cascade_classify, classify, consistency_classify, health_report
-from .config import DEFAULTS, api_key_for, load_config, state_file_path, write_state_flags
+from .config import (
+    DEFAULTS,
+    api_key_for,
+    env_file_path,
+    load_config,
+    load_provider_env,
+    state_file_path,
+    write_state_flags,
+)
 from .gating import answer_confidence, effective_floor, final_exit_code, interpret
 from .providers import (
     REGISTRY,
@@ -114,6 +122,8 @@ __all__ = [
     "is_provider_enabled",
     "list_tasks",
     "load_config",
+    "load_provider_env",
+    "env_file_path",
     "load_tasks_file",
     "log_record",
     "make_choice",

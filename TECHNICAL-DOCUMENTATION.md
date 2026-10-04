@@ -217,6 +217,8 @@ Load custom tasks from TOML or JSON with `sys1.load_tasks_file(path)`. Heads acc
 
 Config precedence: `DEFAULTS` ← `~/.config/sys1/config.toml` ← `~/.config/dev-decisions/config.toml` ← `extra_paths` ← `<repo>/.sys1.toml` / `<repo>/.dev-decisions.toml` ← `SYS1_*` env vars ← `~/.config/sys1/state.json`.
 
+Before any of that, `load_config()` self-configures the provider keys from the env file (`load_provider_env`): `$SYS1_ENV_FILE` → `~/.config/sys1/env` → legacy `~/.config/dev-decisions/env`. Values are `setdefault` into `os.environ` — a key the caller exported wins; the return carries names only, never values. This is why consumers get the full hosted pool from any shell without sourcing anything.
+
 Key sections: `scan`, `classify`, `providers`, `log`. Provider keys follow the pattern `{pid}_api_url`, `{pid}_model`, `{pid}_api_key_env`, `{pid}_requires_key`.
 
 ---

@@ -29,6 +29,7 @@ This is the user-flow contract — what the system does from a caller's perspect
 - System resolves the task (registered name or inline `Task` instance).
 - Resolves provider ids (aliases: `both`, `all`, `core`, `optin`, comma-separated).
 - Filters providers by `providers.enabled` flag and `is_available()` check.
+- Provider keys self-configure: availability does not depend on the calling shell — the layer loads its env file (`$SYS1_ENV_FILE` / `~/.config/sys1/env` / legacy `~/.config/dev-decisions/env`) on every `load_config()`, so hosted providers register even from a bare shell or cron.
 - Calls each provider in order, collecting `{head_id: Answer}` per provider.
 - If no provider succeeds, returns `verdict: "error"`, `escalated: true`, `reason` explaining why.
 - If at least one succeeds, runs `interpret()` over the collected answers.

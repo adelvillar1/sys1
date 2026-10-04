@@ -157,6 +157,59 @@ DEFAULTS: dict = {
 ENV_PREFIX = "SYS1_"
 
 
+def env_file_path() -> Path:
+    """Where the provider-key env file lives.
+
+    Resolution order: `$SYS1_ENV_FILE` override → `~/.config/sys1/env`
+    (canonical) → `~/.config/dev-decisions/env` (legacy fallback — the keys
+    historically lived there; no migration required). The returned path may
+    not exist; callers treat that as a no-op.
+    """
+    env = os.environ.get("SYS1_ENV_FILE")
+    if env:
+        return Path(env).expanduser()
+    canonical = Path.home() / ".config" / "sys1" / "env"
+    if canonical.exists():
+        return canonical
+    return Path.home() / ".config" / "dev-decisions" / "env"
+
+
+def load_provider_env() -> dict:
+    """Load the provider env file into `os.environ` (setdefault semantics —
+    a value the caller exported always wins).
+
+    sys1 is the canonical provider of sys1 calls: consumers get the full
+    provider pool from their own shell, without sourcing anything. Returns
+    `{"path": str | None, "loaded": [key names]}` — names only, never values
+    (same line the rest of the codebase holds about key material).
+    """
+    out: dict = {"path": None, "loaded": []}
+    path = env_file_path()
+    if not path.exists():
+        return out
+    out["path"] = str(path)
+    try:
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            if line.startswith("export "):
+                line = line[len("export ") :].strip()
+            name, _, val = line.partition("=")
+            name = name.strip()
+            if not name or not name.replace("_", "a").isalnum():
+                continue  # not a plausible env name; skip the line
+            val = val.strip()
+            if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
+                val = val[1:-1]
+            if name not in os.environ:
+                os.environ[name] = val
+                out["loaded"].append(name)
+    except Exception:
+        pass  # a broken env file never breaks the tool
+    return out
+
+
 def load_config(
     extra_paths: list[str | Path] | None = None,
     *,
@@ -175,6 +228,11 @@ def load_config(
     # cfg["providers"]["route"] would otherwise mutate the DEFAULTS module
     # global and leak into every later load.
     cfg: dict[str, Any] = copy.deepcopy(DEFAULTS)
+
+    # the layer self-configures: provider keys come from the env file unless
+    # the caller exported their own (load_provider_env setdefaults) — before
+    # the env-override loop below, so SYS1_* names in the file also apply.
+    load_provider_env()
 
     files_to_load: list[Path] = [p for p in DEFAULT_CONFIG_FILES if p.exists()]
     if extra_paths:

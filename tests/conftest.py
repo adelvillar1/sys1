@@ -16,6 +16,18 @@ import sys1
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_env_file(monkeypatch, tmp_path):
+    """Point the provider env file at an absent path for every test.
+
+    The layer self-configures from ~/.config/sys1/env (or the legacy
+    dev-decisions env) — without this pin, tests that assume an empty
+    provider pool inherit whatever the running machine has. Tests that
+    exercise the env file override this with their own SYS1_ENV_FILE.
+    """
+    monkeypatch.setenv("SYS1_ENV_FILE", str(tmp_path / "absent-env-file"))
+
+
 @pytest.fixture
 def cfg(tmp_path: Path) -> dict:
     """A config dict that logs to a tmp dir and points at non-existent venvs."""
