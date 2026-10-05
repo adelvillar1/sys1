@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "sys1 — model roster and routing",
+    "locale": "en",
+    "output": ".archify/architecture-sys1-20261005-152027/sys1-architecture.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "git@github.com:adelvillar1/sys1.git",
+      "provider": "github",
+      "link_mode": "local-only",
+      "revision": "751da80de06c80c69db83486299b670f2b881608"
+    },
+    "views": [
+      {
+        "id": "routing",
+        "label": "Routing",
+        "focus": ["route", "cascade", "wires", "glide", "drex", "jev", "julia", "liquid"],
+        "note": "default chain, size gate, and who is in it"
+      },
+      {
+        "id": "calibration",
+        "label": "Calibration",
+        "focus": ["gate", "jsonl", "calib"],
+        "note": "what every call records and how floors are refit"
+      }
+    ]
+  },
+  "components": [
+    { "id": "code", "type": "external", "label": "Your code", "sublabel": "sys1.classify(p, task, text)", "pos": [40, 40], "size": [155, 64] },
+    { "id": "cli", "type": "backend", "label": "sys1 CLI", "sublabel": "classify · doctor · providers", "pos": [205, 40], "size": [155, 64], "sources": [{ "path": "src/sys1/cli.py", "line": 107, "label": "CLI entry point" }] },
+    { "id": "service", "type": "backend", "label": "HTTP service", "sublabel": "service/main.py · /v1/classify", "pos": [370, 40], "size": [155, 64], "sources": [{ "path": "service/main.py", "line": 60, "label": "FastAPI app" }] },
+    { "id": "consumers", "type": "external", "label": "Repo consumers", "sublabel": "dev-decisions hooks + gates", "pos": [535, 40], "size": [155, 64] },
+
+    { "id": "classify", "type": "backend", "label": "classify()", "sublabel": "api.py · one result, images optional", "pos": [40, 140], "size": [220, 84], "sources": [{ "path": "src/sys1/api.py", "line": 27, "end_line": 50, "label": "classify()" }] },
+    { "id": "tasks", "type": "backend", "label": "Task + head registry", "sublabel": "heads_for() · TOML/JSON tasks", "pos": [40, 248], "size": [220, 84], "sources": [{ "path": "src/sys1/tasks.py", "line": 470, "label": "heads_for()" }] },
+    { "id": "route", "type": "backend", "label": "Routing", "sublabel": "chain glide→drex→jev · size gate", "pos": [40, 356], "size": [220, 84], "sources": [{ "path": "src/sys1/routing.py", "line": 42, "end_line": 45, "label": "default chain + size gate" }] },
+    { "id": "cascade", "type": "backend", "label": "Cascade", "sublabel": "walks the chain, stops when clear", "pos": [40, 464], "size": [220, 84], "sources": [{ "path": "src/sys1/api.py", "line": 126, "label": "cascade_classify()" }] },
+    { "id": "wires", "type": "backend", "label": "Registry + wire factories", "sublabel": "one wire per vendor · parse inside", "pos": [40, 572], "size": [220, 140], "sources": [{ "path": "src/sys1/providers.py", "line": 934, "end_line": 1033, "label": "register() core roster" }] },
+    { "id": "gate", "type": "security", "label": "Gating → verdict", "sublabel": "floor 0.7 · pass / escalate", "pos": [40, 736], "size": [220, 84], "sources": [{ "path": "src/sys1/gating.py", "line": 34, "end_line": 43, "label": "_DEFAULT_FLOORS" }] },
+
+    { "id": "glide", "type": "external", "label": "glide", "sublabel": "Fastino GLiDE · 40K-token window", "tag": "chain #1", "pos": [700, 140], "size": [220, 84], "sources": [{ "path": "src/sys1/providers.py", "line": 972, "end_line": 986, "label": "glide registration" }] },
+    { "id": "drex", "type": "external", "label": "drex", "sublabel": "Nace Drex · 131K-token window", "tag": "chain #2", "pos": [700, 238], "size": [220, 84], "sources": [{ "path": "src/sys1/providers.py", "line": 958, "end_line": 971, "label": "drex registration" }] },
+    { "id": "jev", "type": "external", "label": "jev", "sublabel": "TypeSafe Jev · truncates input", "tag": "chain #3", "pos": [700, 336], "size": [220, 84], "sources": [{ "path": "src/sys1/providers.py", "line": 946, "end_line": 957, "label": "jev registration" }] },
+    { "id": "decide", "type": "external", "label": "decide", "sublabel": "GLiNER-2.5-Decide · hosted", "tag": "legacy head", "pos": [700, 434], "size": [220, 84], "sources": [{ "path": "src/sys1/providers.py", "line": 934, "end_line": 945, "label": "decide registration" }] },
+    { "id": "julia", "type": "external", "label": "julia-1", "sublabel": "Supersoniclabs · 8K window", "tag": "size-gated out", "pos": [700, 532], "size": [220, 84], "sources": [{ "path": "src/sys1/providers.py", "line": 987, "end_line": 1002, "label": "julia registration" }] },
+    { "id": "liquid", "type": "external", "label": "liquid d1", "sublabel": "Liquid AI · 65K window · vision", "tag": "not in chain", "pos": [700, 630], "size": [220, 84], "sources": [{ "path": "src/sys1/providers.py", "line": 1003, "end_line": 1019, "label": "liquid registration" }] },
+    { "id": "local", "type": "backend", "label": "local", "sublabel": "GLiNER2.5-Decide · venv", "tag": "no network", "pos": [700, 728], "size": [220, 84], "sources": [{ "path": "src/sys1/providers.py", "line": 1020, "end_line": 1034, "label": "local registration" }] },
+    { "id": "modernbert", "type": "backend", "label": "modernbert", "sublabel": "ModernBERT-base · cosine", "tag": "eval only", "pos": [700, 826], "size": [220, 84], "sources": [{ "path": "src/sys1/providers.py", "line": 1035, "end_line": 1055, "label": "modernbert registration" }] },
+
+    { "id": "jsonl", "type": "database", "label": "JSONL decision log", "sublabel": "logs/YYYY/MM/DD/events.jsonl", "tag": "never raises", "pos": [40, 890], "size": [280, 90], "sources": [{ "path": "src/sys1/telemetry.py", "line": 30, "end_line": 48, "label": "log_record() append" }] },
+    { "id": "calib", "type": "backend", "label": "Calibration loop", "sublabel": "curves · agreement · feedback", "pos": [40, 1040], "size": [280, 90], "sources": [{ "path": "src/sys1/telemetry.py", "line": 169, "label": "calibration_curve()" }, { "path": "src/sys1/telemetry.py", "line": 101, "label": "provider_agreement()" }, { "path": "src/sys1/telemetry.py", "line": 140, "label": "record_feedback()" }] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "classify() pipeline", "wraps": ["classify", "tasks", "route", "cascade", "wires", "gate"], "pad": 24 },
+    { "kind": "region", "label": "Core roster — tier=core", "wraps": ["glide", "drex", "jev", "decide", "julia", "liquid", "local", "modernbert"], "pad": 24 },
+    { "kind": "region", "label": "Calibration set on disk", "wraps": ["jsonl", "calib"], "pad": 24 }
+  ],
+  "connections": [
+    { "id": "code-calls", "from": "code", "to": "classify" },
+    { "id": "cli-calls", "from": "cli", "to": "classify" },
+    { "id": "service-calls", "from": "service", "to": "classify" },
+    { "id": "consumers-call", "from": "consumers", "to": "classify" },
+
+    { "id": "classify-resolves", "from": "classify", "to": "tasks" },
+    { "id": "tasks-routes", "from": "tasks", "to": "route" },
+    { "id": "route-picks", "from": "route", "to": "cascade" },
+    { "id": "cascade-walks", "from": "cascade", "to": "wires" },
+    { "id": "wires-gate", "from": "wires", "to": "gate" },
+
+    { "id": "w-glide", "from": "wires", "to": "glide", "fromSide": "right", "toSide": "left" },
+    { "id": "w-drex", "from": "wires", "to": "drex", "fromSide": "right", "toSide": "left" },
+    { "id": "w-jev", "from": "wires", "to": "jev", "fromSide": "right", "toSide": "left" },
+    { "id": "w-decide", "from": "wires", "to": "decide", "fromSide": "right", "toSide": "left" },
+    { "id": "w-julia", "from": "wires", "to": "julia", "fromSide": "right", "toSide": "left" },
+    { "id": "w-liquid", "from": "wires", "to": "liquid", "fromSide": "right", "toSide": "left" },
+    { "id": "w-local", "from": "wires", "to": "local", "fromSide": "right", "toSide": "left" },
+    { "id": "w-modernbert", "from": "wires", "to": "modernbert", "fromSide": "right", "toSide": "left" },
+
+    { "id": "gate-logs", "from": "gate", "to": "jsonl", "label": "append" },
+    { "id": "log-calib", "from": "jsonl", "to": "calib", "label": "re-fit floors", "variant": "dashed" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Routing policy",
+      "items": [
+        "route() returns glide → drex → jev: hosted only — local and modernbert are never auto-routed",
+        "long input (past long_input_chars): glide and julia move to the back of the chain",
+        "providers.route.enabled=false falls back to the legacy chain decide → jev",
+        "by_task overrides, availability flags, and task allow-lists filter the chain per call"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Core roster — 8 providers",
+      "items": [
+        "decide · jev · drex · glide · julia · liquid · local · modernbert",
+        "jev-class models (drex, glide, julia, liquid) inherit the jev head set via heads_for()",
+        "glide, drex, jev speak /v1/systemone; decide is OpenAI-compatible; local + modernbert run in-process",
+        "julia keeps top1-p confidence; liquid keeps the (N·max−1)/(N−1) statistic; both floor at 0.7"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Candidates — 7, opt-in",
+      "items": [
+        "clm · openjev · kev · tev1 · laya · decide_1b · decide_multi",
+        "disabled until named in providers.enabled; each speaks a wire that already exists",
+        "flip the flag and point {pid}_api_url at the model — no code change"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Telemetry + calibration",
+      "items": [
+        "every call appends one JSONL record; a broken log never breaks the caller",
+        "records carry answers, verdict, latency, tokens, http_status, retries, cost_usd, image_count",
+        "record_feedback joins graded outcomes by input_sha256",
+        "floors are refit only when a head qualifies — thresholds never transfer between providers"
+      ]
+    }
+  ]
+}

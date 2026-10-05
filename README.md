@@ -1,16 +1,18 @@
 # sys1
 
 **A reusable decision-model abstraction for System One judgment in code.**
-Jev, GLiNER-2.5-Decide, local GLiNER2, and ModernBERT behind one Python API
-and one wire shape — same call from CLI, git hooks, CI gates, an HTTP service,
-and any language that speaks JSON.
+Jev, Drex, GLiDE, Julia, Liquid d1, GLiNER-2.5-Decide, local GLiNER2, and
+ModernBERT behind one Python API and one wire shape — same call from CLI,
+git hooks, CI gates, an HTTP service, and any language that speaks JSON.
 
 ```python
 import sys1
 
 # One call. Pick a task. Get a normalized answer + a verdict.
 result = sys1.classify(
-    provider="decide",          # "decide" | "jev" | "local" | "modernbert" | "both" | "all" | an enabled candidate id
+    provider="decide",          # "decide" | "jev" | "drex" | "glide" | "julia"
+                                #   | "liquid" | "local" | "modernbert"
+                                #   | "both" | "all" | an enabled candidate id
     task="change",              # "change" | "pr_gate" | "issue_triage" | ... or your own
     text=staged_diff,
 )
@@ -35,17 +37,17 @@ and into a *decision contract* is the criteria.
 | `classify()` | `api.py` | Top-level: resolve → call providers → interpret → log |
 | `cascade_classify()` | `api.py` | Walk a provider chain; stop at the first that clears. Default chain is routed (`routing.route`: glide first for short inputs, drex ahead of it for long ones) |
 | `Head` / `Task` / `Answer` | `types.py` | Dataclasses: stable head ids, provider wire shapes |
-| `Provider` | `providers.py` | Pluggable registry: 6 core + 7 opt-in candidates |
+| `Provider` | `providers.py` | Pluggable registry: 8 core + 7 opt-in candidates |
 | `route()` / `route_decision()` | `routing.py` | Deterministic default-chain policy for the cascade: per-task override, size gate, availability, task allow-list |
 | `plansurface` | `plansurface.py` | Layered precompute for plan decomposition: criterion→module mapping, pairwise dependency heads, thresholded DAG assembly (uncertain band, cycle breaks), reconcile-vs-git grading, `grade_and_record()` calibration writer |
-| `parse_decide` / `_jev` / `_drex` / `_glide` / `_local` / `_modernbert` | `parsers.py` | Wire-shape normalization to the shared Answer dict |
+| `parse_decide` / `_jev` / `_drex` / `_glide` / `_julia` / `_liquid` / `_local` / `_modernbert` | `parsers.py` | Wire-shape normalization to the shared Answer dict |
 | `interpret()` | `gating.py` | Confidence floors → pass / escalate / block verdict |
 | `log_record()` | `telemetry.py` | JSONL log; redaction; calibration joins |
 | 9 pre-registered tasks | `tasks.py` | change, commit_audit, deps_risk, docs_drift, api_drift, pr_gate, issue_triage, safety, vision_qc |
 | HTTP service | `service/main.py` | FastAPI wrapper, same API, any language |
 | `sys1` CLI | `cli.py` | `classify`, `doctor`, `providers`, `tasks`, `version` |
 
-![sys1 — how a judgment flows](docs/architecture-flow.svg)
+**[▶ sys1 — model roster and routing](.archify/architecture-sys1-20261005-152027/sys1-architecture.html)** — interactive architecture diagram (open in a browser): the callers, the judgment journey from `classify()` through the routed cascade to the wire factories, the current eight-model roster, and the default chain `glide → drex → jev` with the size gate.
 
 The library is **stdlib-only** at runtime. `urllib` for HTTP providers,
 `subprocess` for the local GLiNER venv. `pip install sys1` adds no hard
@@ -102,16 +104,22 @@ raises with the fix-it hint.
 
 ### Confidence semantics (important)
 
-Jev's `confidence` is not the same kind of number as Decide's:
+The decision models do not all report `confidence` on the same scale:
 
 ```
-Jev:      confidence ≈ (N × max_prob − 1) / (N − 1)        # distribution-shape
-Decide:   confidence = max(probabilities)                   # literal max-prob
+Jev family:  confidence ≈ (N × max_prob − 1) / (N − 1)     # distribution-shape
+Decide:      confidence = max(probabilities)                # literal max-prob
+Julia-1:     confidence = probabilities[top1]               # literal max-prob
 ```
 
-For a binary (N=2) the two agree. For N≥3, Jev's confidence diverges from
-max-prob and a "0.7 Jev confidence" on a 5-way choice means something
-different than "0.7 Decide confidence." Tune them separately via
+`jev`, `drex`, `glide`, and `liquid` all report the Jev-family statistic —
+don't threshold any of them like Decide. `julia` is the exception: its
+`confidence` is the top-1 probability, thresholdable at the same numbers as
+Decide's.
+
+For a binary (N=2) the two scales agree. For N≥3, Jev-family confidence
+diverges from max-prob and a "0.7 Jev confidence" on a 5-way choice means
+something different than "0.7 Decide confidence." Tune them separately via
 `cfg["classify"]["jev_confidence_floor"]` and `…["decide_confidence_floor"]`.
 
 Noul answers are the exception: a Jev noul (`{"noul": 0.95}`) carries **no
