@@ -62,7 +62,9 @@ the body before the state, every question sees all of them, and each question bi
 (1.5 input tokens per 32×32 patch). Other wires ignore the argument, so naming a text-only provider
 in a cascade with `images=` silently drops them — the api docstring tells callers to name liquid
 explicitly for visual inputs. The log record carries `image_count` (a count, never content); the
-JSONL path never sees the base64 payload.
+JSONL path never sees the base64 payload. `cli.load_images` enforces the d1 limits client-side
+(magic-byte type sniff, ≤5MB per image, ≤8 per request) before any provider call; guard failures
+exit 2 without a request.
 
 ## HTTP core and retry semantics
 

@@ -168,13 +168,17 @@ Heads: `heads_for(task, "julia")` inherits the `jev` head set. Needs `SUPERSONIC
 - **Auth**: plain `Authorization: Bearer` — no idempotency or User-Agent headers required (both were the julia host's quirks). Strict validation like Drex/GliDE/Julia: question shape is `to_drex_head()` verbatim, anything extra is a 422.
 - **Usage keys**: `usage.input_tokens`/`output_tokens` (output always 0) plus `cost` in USD — $0.04 per 1M input tokens, output free; `cost` rides into telemetry as `cost_usd` for the calibration stream.
 
-Heads: `heads_for(task, "liquid")` inherits the `jev` head set. Needs `LIQUID_API_KEY` (repo `.env`). **Routing: registered core but NOT in the default chain** — the calibration gate is the phase-1 close-out; live probes (text change-diff classify + a 64×64 solid-blue PNG read as "blue" at conf 0.99995) confirm wire-level fitness. It is NOT in `_SIZE_EXCLUDED` (150K-char bound, 65,536-token window). The `d1:free` model (text-only, keyless, 32K-token window) is never exercised — user constraint 2026-10-05; the wire pins model `d1`.
+Heads: `heads_for(task, "liquid")` inherits the `jev` head set for text tasks; tasks that define their own heads without a jev override (e.g. `vision_qc`) get those verbatim. Needs `LIQUID_API_KEY` (repo `.env`). **Routing: registered core but NOT in the default text chain** — text admission remains a separate corpus decision; live probes (text change-diff classify + a 64×64 solid-blue PNG read as "blue" at conf 0.99995) confirm wire-level fitness. It IS the default chain for `vision_qc` via the shipped `providers.route.by_task` override, earned by the pair probe below. It is NOT in `_SIZE_EXCLUDED` (150K-char bound, 65,536-token window). The `d1:free` model (text-only, keyless, 32K-token window) is never exercised — user constraint 2026-10-05; the wire pins model `d1`.
+
+### The vision_qc pair probe (2026-10-05, evidence in docs/plans/2026-10-05-vision-qc-task.md)
+
+`vision_qc` is sys1's own task — four heads over a rendered image asset (`matches_brief` choice yes/partial/no; `garbled_text` noul true=defect; `on_palette`/`legible_small` nouls false=defect), `providers=["liquid"]` so no text-only provider can answer pixel questions from the brief alone. `scripts/vision_probe.py` runs the corpus pair-comparison: (a) d1 on pixels vs (b) the today-path — a blind describer's text account of the asset judged by `glide,drex,jev` over the same heads. The 8-asset corpus (a brand hero PNG + a documentation diagram, with sips/PIL corruptions: 126° hue shift, mojibake overlay, full desaturation, 32px downscale, clean-re-encode control) scored **pixels 20/25 vs ground truth, mediated 10/25**; the decisive case was the control re-encode — pixel-identical to the clean asset, yet the description's transcription noise made the mediated chain call `garbled_text=true` while d1 held `false` at conf 1.00. That is describer confabulation caught. Known d1 gaps: it kept `on_palette=true` on the hero's hue-shifted and desaturated variants (conf 0.75–0.85 — above floor, wrong; a floor raise cannot catch confident-wrong, this is head-rewording evidence) and called `legible_small=true` on the 32px downscale itself. The agreement table and per-asset annotations live in the plan's Outcome.
 
 ### Routing (cascade default chains)
 
 `routing.route(task, text, cfg)` is the deterministic policy that builds `cascade_classify`'s chain when none is passed explicitly. It is a policy function, not an adaptive router — decision calls are low-volume and near-free at the head of the chain; quality lives in floors and calibration, not model scoring.
 
-1. **Chain source**: `providers.route.by_task[task.id]` override, else `providers.route.default_chain` (default `glide,drex,jev` — hosted-only by design; `local`/`modernbert` are never auto-routed).
+1. **Chain source**: `providers.route.by_task[task.id]` override, else `providers.route.default_chain` (default `glide,drex,jev` — hosted-only by design; `local`/`modernbert` are never auto-routed). Shipped override: `vision_qc → liquid` (the only pool that reads pixels; pair-probe evidence above).
 2. **Size gate**: past `providers.route.long_input_chars` (default: `glide_max_chars`), providers whose documented bound cannot take the input (glide, julia) move to the back — drex-first for long inputs.
 3. **Availability**: providers that are not enabled+usable right now drop out.
 4. **Task allow-list**: `Task.providers` (e.g. safety's) is a hard filter, preserving chain order.
@@ -218,7 +222,7 @@ Cross-provider warning: a head floor scalar applies in the **serving provider's 
 
 ## 6. Task System
 
-Eight pre-registered tasks: `change`, `commit_audit`, `deps_risk`, `docs_drift`, `api_drift`, `pr_gate`, `issue_triage`, `safety`. Each is a `Task(id, heads, provider_heads={...})`. Heads are keyed by stable 8-hex `id` (sha1 prefix of the task text).
+Nine pre-registered tasks: eight mirror dev-decisions (`change`, `commit_audit`, `deps_risk`, `docs_drift`, `api_drift`, `pr_gate`, `issue_triage`, `safety`) and `vision_qc` is sys1's own — the liquid-only artifact-QC task. Each is a `Task(id, heads, provider_heads={...})`. Heads are keyed by stable 8-hex `id` (sha1 prefix of the task text).
 
 Load custom tasks from TOML or JSON with `sys1.load_tasks_file(path)`. Heads accept an optional per-head `floor` (uncertainty floor in the serving provider's confidence semantics — see §5); the loader passes it through to `make_choice`/`make_noul`/`make_score`. TOML head specs are inline tables and must stay on one line (TOML 1.0); `provider_heads.<prov>` is a list of head specs.
 

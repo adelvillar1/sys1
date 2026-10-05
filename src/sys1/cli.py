@@ -1,8 +1,9 @@
 """
 Minimal CLI companion to the sys1 library.
 
-Only what the library itself owns: classify a string from a file or stdin,
-print a health report, and show the version. Anything repo-aware (git hooks,
+Only what the library itself owns: classify a string from a file or stdin
+(optionally alongside image files via --images, vision-capable providers
+only), print a health report, and show the version. Anything repo-aware (git hooks,
 staged diff detection, fleet scans) stays in `dev-decisions`, which imports
 this library — keeping sys1 a clean, app-agnostic dependency.
 """
@@ -10,10 +11,48 @@ this library — keeping sys1 a clean, app-agnostic dependency.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import sys as _sys
+from pathlib import Path
 
 from . import __version__, classify, health_report, list_tasks
+
+# d1 (liquid) wire limits: PNG/JPEG/WebP/GIF only, ≤5MB per image, ≤8 images
+# per request, remote URLs rejected — so the CLI rejects them too, and fails
+# before any request is made.
+MAX_IMAGE_BYTES = 5 * 1024 * 1024
+MAX_IMAGES = 8
+
+
+def _sniff_image(data: bytes) -> str | None:
+    """Content type from magic bytes — d1 accepts exactly these four."""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def load_images(paths: list[str]) -> list[str]:
+    """Read image files into data URLs for the wire. Raises FileNotFoundError /
+    ValueError with a clear message before anything is sent."""
+    if len(paths) > MAX_IMAGES:
+        raise ValueError(f"at most {MAX_IMAGES} images per request (got {len(paths)})")
+    urls: list[str] = []
+    for p in paths:
+        data = Path(p).read_bytes()
+        if len(data) > MAX_IMAGE_BYTES:
+            raise ValueError(f"{p}: {len(data):,} bytes exceeds the 5MB per-image cap")
+        ctype = _sniff_image(data)
+        if ctype is None:
+            raise ValueError(f"{p}: not a PNG/JPEG/WebP/GIF image")
+        urls.append(f"data:{ctype};base64,{base64.b64encode(data).decode()}")
+    return urls
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -26,6 +65,15 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--input", "-i", default="-", help="path to text file, or '-' for stdin")
     c.add_argument("--no-log", action="store_true", help="skip the JSONL calibration log")
     c.add_argument("--json", "-j", action="store_true", help="emit raw JSON instead of human summary")
+    c.add_argument(
+        "--images",
+        nargs="+",
+        default=None,
+        metavar="PATH",
+        help="image files sent alongside the text to vision-capable providers "
+        "(liquid/d1 only; text-only wires ignore them). PNG/JPEG/WebP/GIF, "
+        "≤5MB each, ≤8 per request",
+    )
     c.set_defaults(func=_cmd_classify)
 
     d = sub.add_parser("doctor", help="Provider availability snapshot.")
@@ -52,7 +100,14 @@ def _cmd_classify(args: argparse.Namespace) -> int:
     else:
         with open(args.input, encoding="utf-8", errors="replace") as f:
             text = f.read()
-    result = classify(args.provider, args.task, text, log=not args.no_log)
+    images = None
+    if args.images:
+        try:
+            images = load_images(args.images)
+        except (FileNotFoundError, ValueError) as e:
+            print(f"error: {e}", file=_sys.stderr)
+            return 2
+    result = classify(args.provider, args.task, text, log=not args.no_log, images=images)
     if args.json:
         print(json.dumps(result.as_dict(), indent=2, default=str))
     else:

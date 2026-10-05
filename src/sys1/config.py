@@ -161,7 +161,15 @@ DEFAULTS: dict = {
         "route": {
             "enabled": True,
             "default_chain": "glide,drex,jev",
-            "by_task": {},  # task id -> chain string, e.g. {safety = "jev,glide"}
+            "by_task": {
+                # task id -> chain string, e.g. {safety = "jev,glide"}
+                # vision_qc has no text-grounded serving provider: d1 is the
+                # only pool that reads pixels, and the pair probe
+                # (docs/plans/2026-10-05-vision-qc-task.md, 2026-10-05) showed
+                # the description-mediated chain missing the artifact on
+                # matches_brief 0/7 and on_palette 3/8 vs pixels 5/7 and 6/8.
+                "vision_qc": "liquid",
+            },
             "long_input_chars": None,  # default: glide_max_chars
         },
     },

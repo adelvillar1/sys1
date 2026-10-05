@@ -41,7 +41,7 @@ and into a *decision contract* is the criteria.
 | `parse_decide` / `_jev` / `_drex` / `_glide` / `_local` / `_modernbert` | `parsers.py` | Wire-shape normalization to the shared Answer dict |
 | `interpret()` | `gating.py` | Confidence floors → pass / escalate / block verdict |
 | `log_record()` | `telemetry.py` | JSONL log; redaction; calibration joins |
-| 8 pre-registered tasks | `tasks.py` | change, commit_audit, deps_risk, docs_drift, api_drift, pr_gate, issue_triage, safety |
+| 9 pre-registered tasks | `tasks.py` | change, commit_audit, deps_risk, docs_drift, api_drift, pr_gate, issue_triage, safety, vision_qc |
 | HTTP service | `service/main.py` | FastAPI wrapper, same API, any language |
 | `sys1` CLI | `cli.py` | `classify`, `doctor`, `providers`, `tasks`, `version` |
 
@@ -62,7 +62,7 @@ dependencies; FastAPI is opt-in via `pip install 'sys1[service]'`.
 | `drex` | Nace hosted `Drex` (`/v1/systemone`, Jev-class) | Same three primitives as Jev with a **131,072-token state window** (`drex-v1.5`) — long states without truncation. Calibrated probabilities; noul gates on `max(p, 1-p)` like Jev. Needs `DREX_API_KEY` (repo `.env`). | Score answers are 0-indexed on the wire (sys1 shifts by `score_min`); `confidence` is Jev-family — don't threshold it like Decide. |
 | `glide` | Fastino hosted `GLiDE` (`/v1/systemone`, Jev/Drex-class) | Jev-class decision quality at Decide-class pricing (billed like hosted GLiNER-2.5-Decide — **not** free; corrected 2026-10-02); documented confidence formulas; the cascade's routed default head for short inputs. Needs `FASTINO_API_KEY` (repo `.env`). | 40,000-token rendered-prompt limit — long states route to Drex. Score 0-indexed like Drex (sys1 shifts); noul confidence stripped so gating derives `max(p, 1-p)`; choice/score margins run lower than Jev's — tune `glide_confidence_floor` per task if needed. Bimodal latency (1–8s, 17.5s tail observed). |
 | `julia` | Supersoniclabs hosted `Julia-1` (`/v1/systemone`, BERT-based) | Cheapest hosted model ($0.025 per 1M input / $0 output); fan-out native (all heads, one request, 0.5–1.2s). Needs `SUPERSONIC_API_KEY` (repo `.env`). | 8,192-token window (`julia_max_chars`, overflow = raw 502); requires `Idempotency-Key` + `User-Agent` headers (encoded in the wire). **Calibrated OUT of the default chain** (1/6 label agreement with glide/jev on the change task, 2026-10-02) — use for bulk triage or per-task via `providers.route.by_task` with fitted floors. |
-| `liquid` | Liquid AI hosted `d1` (`/decisions/v1/systemone`, the TypeSafe System One API) | The pool's only **native vision** — up to 8 base64 images per request alongside the state (`images=` on `classify()`/`cascade_classify()`); 65,536-token prompt window (`liquid_max_chars`); $0.04 per 1M input tokens / $0 output. Needs `LIQUID_API_KEY` (repo `.env`). | Images bill 1.5 tokens per 32×32 patch, per question, against the same prompt cap (4.5MB body cap); choice/score confidence is the Jev-family distribution statistic `(N*max-1)/(N-1)` (thresholdable at the 0.7 family floor); noul carries no confidence field. Registered core but NOT in the default chain (awaits calibration evidence). |
+| `liquid` | Liquid AI hosted `d1` (`/decisions/v1/systemone`, the TypeSafe System One API) | The pool's only **native vision** — up to 8 base64 images per request alongside the state (`images=` on `classify()`/`cascade_classify()`, `--images PATH...` on the CLI); 65,536-token prompt window (`liquid_max_chars`); $0.04 per 1M input tokens / $0 output. Needs `LIQUID_API_KEY` (repo `.env`). | Images bill 1.5 tokens per 32×32 patch, per question, against the same prompt cap (4.5MB body cap); choice/score confidence is the Jev-family distribution statistic `(N*max-1)/(N-1)` (thresholdable at the 0.7 family floor); noul carries no confidence field. Serves the pre-registered `vision_qc` task (routed there by default via `providers.route.by_task`, per the 2026-10-05 pair probe); still NOT in the default text chain — text admission is a separate corpus decision. |
 | `local` | `fastino/GLiNER2.5-Decide` via the prescribed `gliner2.classification` API (load-once classifier server, or venv subprocess) | No network, no cost, runs offline; one decode for all heads; full per-label probabilities | Needs the venv path (and, server-side, a long-lived process — see below) |
 | `modernbert` | `answerdotai/ModernBERT-base` sentence encoder (eval only, no fine-tuning) | Fast + cheap + a useful calibration comparison | Noisy; lower confidence floor (0.55 default) reflects that. Use for calibration, not for gates. |
 
@@ -215,6 +215,14 @@ cascade = sys1.cascade_classify(["decide", "jev"], "issue_triage", issue_body)
 # Self-consistency: re-ask n times, band the signal, route the middle to review
 report = sys1.consistency_classify("local", "safety", text, n=5)
 print(report["heads"]["removes_auth"]["band"])   # "no" | "uncertain" | "yes"
+
+# Vision QC: d1 judges the rendered artifact itself (liquid is the only
+# vision provider; the task's heads answer from pixels, not from a paraphrase)
+qc = sys1.classify("liquid", "vision_qc", open("brief.txt").read(), images=[image_data_url])
+print(qc.head("matches_brief", "liquid"), qc.head("garbled_text", "liquid"))
+
+# Same task from the CLI (guards the d1 limits: png/jpeg/webp/gif, ≤5MB each, ≤8)
+#   sys1 classify --provider liquid --task vision_qc -i brief.txt --images hero.png
 
 # Plan surface: precompute the decomposition judgment graph for a drafted plan
 from sys1 import plansurface as ps
@@ -446,7 +454,7 @@ sys1/
 │   ├── types.py         Head, Answer, Task, Provider, ClassifyResult
 │   ├── providers.py     core + candidate registry, wire factories, flags
 │   ├── parsers.py       provider wire-shape → normalized Answer
-│   ├── tasks.py         8 pre-registered tasks + TOML/JSON loader
+│   ├── tasks.py         9 pre-registered tasks + TOML/JSON loader
 │   ├── config.py        defaults, TOML load, env overrides, state.json
 │   ├── gating.py        interpret() + final_exit_code()
 │   ├── telemetry.py     JSONL log, redaction, histogram, feedback, calibration

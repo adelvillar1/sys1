@@ -40,3 +40,6 @@ CLAUDE.local.md
 
 # Local env vars (gitignored; holds API keys, e.g. DREX_API_KEY)
 .env
+
+# Probe corpora (image bytes are never committed; see scripts/vision_probe.py)
+data/

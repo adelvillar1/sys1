@@ -5,8 +5,10 @@ A Task is a named collection of heads plus (optional) per-provider overrides
 for the cases where one provider asks a different set than another (the
 existing dev-decisions "change" task: Jev asks 4 questions, Decide/local ask 2).
 
-Eight tasks are pre-registered, mirroring `dev-decisions._TASK_BUILDERS`.
-Add your own with `register_task(Task(...))` or load from a TOML/JSON file.
+Nine tasks are pre-registered: eight mirror `dev-decisions._TASK_BUILDERS`,
+and `vision_qc` is sys1's own (the liquid-only vision task — no dev-decisions
+counterpart). Add your own with `register_task(Task(...))` or load from a
+TOML/JSON file.
 """
 
 from __future__ import annotations
@@ -445,6 +447,60 @@ _SAFETY = Task(
 )
 
 
+_VISION_QC = Task(
+    id="vision_qc",
+    description=(
+        "Vision QC of a rendered image asset (logo, hero, marketing visual) against "
+        "its written brief. The brief goes as the input text and must embed the brand "
+        "hexes and target sizes; the image goes via classify(images=...)."
+    ),
+    # Liquid d1 is the pool's only vision-capable provider; a text-only provider
+    # answering these heads from the brief would be measuring nothing.
+    providers=["liquid"],
+    heads=[
+        make_choice(
+            "Does the rendered image depict what the written brief asks for? "
+            "yes = fully matches; partial = partially matches; no = contradicts or "
+            "misses the brief.",
+            ["yes", "partial", "no"],
+            id="matches_brief",
+            descriptions={
+                "yes": "The image fully matches the brief.",
+                "partial": "The image partially matches the brief.",
+                "no": "The image contradicts or misses the brief.",
+            },
+        ),
+        make_noul(
+            "Does the image contain garbled, corrupted, or nonsensical text? "
+            "(true = defect; generated logos fail this most often.)",
+            id="garbled_text",
+            descriptions={
+                "yes": "Yes — the image contains garbled or corrupted text.",
+                "no": "No — any text in the image is clean and readable.",
+            },
+        ),
+        make_noul(
+            "Are the image's dominant colors within the brand hexes quoted in the "
+            "brief? (false = defect.)",
+            id="on_palette",
+            descriptions={
+                "yes": "Yes — the colors are within the brand palette.",
+                "no": "No — the colors fall outside the brand palette.",
+            },
+        ),
+        make_noul(
+            "Would the central mark of the image remain legible scaled to 32px "
+            "favicon size? (false = defect.)",
+            id="legible_small",
+            descriptions={
+                "yes": "Yes — the mark is legible at 32px.",
+                "no": "No — the mark collapses at 32px.",
+            },
+        ),
+    ],
+)
+
+
 # ── registry + detection ─────────────────────────────────────────────────────
 
 _TASKS: dict[str, Task] = {}
@@ -455,7 +511,17 @@ def register_task(task: Task) -> Task:
     return task
 
 
-for _t in (_CHANGE, _COMMIT_AUDIT, _DEPS_RISK, _DOCS_DRIFT, _API_DRIFT, _PR_GATE, _ISSUE_TRIAGE, _SAFETY):
+for _t in (
+    _CHANGE,
+    _COMMIT_AUDIT,
+    _DEPS_RISK,
+    _DOCS_DRIFT,
+    _API_DRIFT,
+    _PR_GATE,
+    _ISSUE_TRIAGE,
+    _SAFETY,
+    _VISION_QC,
+):
     register_task(_t)
 
 

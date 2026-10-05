@@ -15,9 +15,12 @@ here. `python -m sys1 <command>` (or the `sys1` console script).
 
 ## Commands
 
-- `classify --provider X --task Y` — runs `api.classify`, prints the gate summary and exits with
-  `gating.final_exit_code` semantics (0 pass / 1 warn-escalate / 2 block), the same contract the
-  git hooks in consumers rely on.
+- `classify --provider X --task Y [--images PATH ...]` — runs `api.classify`, prints the gate
+  summary and exits with `gating.final_exit_code` semantics (0 pass / 1 warn-escalate / 2 block),
+  the same contract the git hooks in consumers rely on. `--images` loads files as data URLs for
+  vision-capable providers (liquid/`vision_qc`), enforcing the d1 wire limits before any request:
+  PNG/JPEG/WebP/GIF only (magic-byte sniff), ≤5MB per image, ≤8 per request; a guard failure
+  exits 2 without calling a provider. Image content never reaches the log (`image_count` only).
 - `doctor` — `api.health_report` rendered per provider: enabled/configured/available plus the human
   `availability_reason` (disabled by flag, missing key, venv not found, no listener).
 - `providers` — the registry listing (tier, wire, description); the quick answer to "what can I

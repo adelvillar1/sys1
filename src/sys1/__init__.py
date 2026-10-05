@@ -13,8 +13,9 @@ on import. Candidate providers (CLM-8B, openjev, Kev, Tev1, Laya, the GLiNER
 1B/multilingual variants) are wired but opt-in: they speak an existing wire and
 stay disabled until listed in `providers.enabled` and their endpoint is up.
 Tasks (the head/label sets that name the questions) are
-data-driven; eight are pre-registered (change, commit_audit, deps_risk,
-docs_drift, api_drift, pr_gate, issue_triage, safety). Load more from TOML or
+data-driven; nine are pre-registered (change, commit_audit, deps_risk,
+docs_drift, api_drift, pr_gate, issue_triage, safety, and sys1's own
+vision_qc — the liquid-only artifact-QC task). Load more from TOML or
 JSON via `sys1.load_tasks_file(...)`.
 
 The library is stdlib-only. Optional HTTP providers and subprocess local-model

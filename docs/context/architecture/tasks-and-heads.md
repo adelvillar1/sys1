@@ -32,8 +32,12 @@ the scale — verified against the TypeSafe docs), `to_drex_head` (noul criteria
 
 ## Tasks
 
-Eight tasks are pre-registered (`change`, `commit_audit`, `deps_risk`, `docs_drift`, `api_drift`,
-`pr_gate`, `issue_triage`, `safety`), mirroring dev-decisions' `_TASK_BUILDERS`. `provider_heads`
+Nine tasks are pre-registered: eight mirror dev-decisions' `_TASK_BUILDERS` (`change`,
+`commit_audit`, `deps_risk`, `docs_drift`, `api_drift`, `pr_gate`, `issue_triage`, `safety`),
+and `vision_qc` is sys1's own — the liquid-only artifact-QC task (`matches_brief` choice;
+`garbled_text` true=defect, `on_palette`/`legible_small` false=defect nouls). Its
+`providers=["liquid"]` is the same allow-list mechanism as `safety`, inverted: no text-only
+provider may answer heads that only pixels can settle. `provider_heads`
 exists because providers ask different sets for the same task (`change`: jev gets breaking/PII
 nouls, decide/local get two choice heads). `heads_for(task, provider)` picks the set; **drex,
 glide, julia, and liquid inherit the `jev` set** wherever one is defined.
