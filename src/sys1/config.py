@@ -79,6 +79,22 @@ DEFAULTS: dict = {
         "julia_model": "julia-1",
         "julia_api_key_env": "SUPERSONIC_API_KEY",
         "julia_max_chars": 12_000,
+        # Liquid AI d1 (hosted, /decisions/v1/systemone — TypeSafe's System
+        # One API as implemented at api.liquid.ai, including the OpenJev
+        # `images` extension) — the pool's first vision-capable decision
+        # model. d1 caps each prompt (every question re-renders the whole
+        # state, images included) at 65,536 tokens and 250KB of text, and
+        # the request body at 4.5MB. Probed live 2026-10-05: ~4.4
+        # chars/token on prose (2,173 tokens for 9,639 chars), so
+        # liquid_max_chars stays under the token cap even at dense prose
+        # rates. Choice/score confidence is the Jev-family distribution
+        # statistic (N*max_prob - 1)/(N - 1) — thresholdable at the family
+        # floor; noul answers carry no confidence field. $0.04 per 1M
+        # input tokens at the probed cost ($4e-8/token), output free.
+        "liquid_api_url": "https://api.liquid.ai/decisions/v1/systemone",
+        "liquid_model": "d1",
+        "liquid_api_key_env": "LIQUID_API_KEY",
+        "liquid_max_chars": 150_000,
         # Local GLiNER2 — the fastino-prescribed classification API
         # (gliner2.classification.Classifier). Two serving modes: a load-once
         # classifier server (service/classifier_server.py) when

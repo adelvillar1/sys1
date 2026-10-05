@@ -58,7 +58,7 @@ STUB_ID = "recipe_stub"
 EDGE_CONF = 0.8  # taxonomy-walk's per-edge confidence; per-test mutable
 
 
-def _stub_classify(text, heads, cfg, tele):
+def _stub_classify(text, heads, cfg, tele, images=None):
     answers = {}
     for h in heads:
         if h.id == "edge":
@@ -155,7 +155,7 @@ class TestGuardrailRecipe:
     def test_screen_fails_closed_on_unknown_answer(self, cfg, clean_tasks):
         """A hazard head with no probability is unknown, not "no hazard"."""
 
-        def _declining(text, heads, cfg, tele):
+        def _declining(text, heads, cfg, tele, images=None):
             return {h.id: {"type": "noul", "noul": None, "confidence": 0.0} for h in heads}
 
         provider = Provider(id="declining", name="declining", classify=_declining, is_available=lambda c: True)
@@ -169,7 +169,7 @@ class TestGuardrailRecipe:
             sys1.REGISTRY.pop("declining", None)
 
     def test_screen_fails_closed_on_provider_error(self, cfg, clean_tasks):
-        def _broken(text, heads, cfg, tele):
+        def _broken(text, heads, cfg, tele, images=None):
             raise RuntimeError("upstream 529")
 
         provider = Provider(id="broken", name="broken", classify=_broken, is_available=lambda c: True)

@@ -250,12 +250,15 @@ class Provider:
     """
     A pluggable decision provider.
 
-    `classify(text, heads, cfg, telemetry) -> dict[head_id, Answer]` — the
-    provider's response, already normalized to the Answer wire shape above.
-    Implementations own retry/backoff and telemetry population.
+    `classify(text, heads, cfg, telemetry, images=None) -> dict[head_id,
+    Answer]` — the provider's response, already normalized to the Answer wire
+    shape above. Implementations own retry/backoff and telemetry population.
+    `images` is an optional list of base64 image payloads (data URLs or
+    {content_type, base64} objects); wires that accept vision input (liquid)
+    forward them to the provider, text-only wires ignore them.
 
     Flag fields (see providers.py `enabled_set`):
-      - `tier`: "core" (the four built-ins, on by default) or "candidate"
+      - `tier`: "core" (the built-ins, on by default) or "candidate"
         (opt-in models, off until listed in `providers.enabled`).
       - `wire`: which request shape the provider speaks — "jev", "openai",
         or "gliner". The dashboard and the wire factories key off this.

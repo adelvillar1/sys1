@@ -8,7 +8,7 @@ import pytest
 from conftest import load_fixture
 
 import sys1
-from sys1.parsers import parse_drex, parse_glide, parse_julia
+from sys1.parsers import parse_drex, parse_glide, parse_julia, parse_liquid
 from sys1.types import make_choice, make_noul, make_score
 
 
@@ -549,3 +549,191 @@ class TestParseJulia:
         assert multi["troca"]["noul"] == 0.9811307454626658
         assert multi["severity"]["score"] == pytest.approx(3.2961735052526153)
         assert multi["severity"]["legend"]["4"] == "high"
+
+
+class TestParseLiquid:
+    def _heads(self):
+        return [
+            make_choice("Is this a feature or fix?", ["feat", "fix"], id="diff_type"),
+            make_noul("Does this convey urgency?", id="urgent"),
+            make_score(
+                "Rate the risk",
+                id="risk",
+                score_min=1,
+                score_max=5,
+                legend=["low", "medium", "high", "very high", "extreme"],
+            ),
+        ]
+
+    def test_choice_confidence_is_distribution_statistic_kept(self):
+        # d1 choice confidence is the Jev-family distribution statistic
+        # (N*max_prob - 1)/(N - 1) over the probabilities, byte-equal on the
+        # live 2026-10-05 probe: (3*0.9305552282044707 - 1) / 2 =
+        # 0.8958328423067061. Directly thresholdable at the family floor; KEPT.
+        resp = {
+            "answers": {
+                "diff_type": {
+                    "type": "choice",
+                    "choice": "fix",
+                    "probabilities": {
+                        "fix": 0.9305552282044707,
+                        "refactor": 0.06740919062018329,
+                        "docs": 0.0020355811753458,
+                    },
+                    "confidence": 0.8958328423067061,
+                }
+            }
+        }
+        parsed = parse_liquid(resp, self._heads()[:1])
+        entry = parsed["diff_type"]
+        assert entry["type"] == "choice"
+        assert entry["label"] == "fix"
+        assert entry["confidence"] == 0.8958328423067061
+        assert entry["probabilities"]["fix"] == 0.9305552282044707
+        # the statistic identity itself guards the keep decision
+        probs = entry["probabilities"]
+        n = len(probs)
+        assert (n * max(probs.values()) - 1) / (n - 1) == pytest.approx(0.8958328423067061)
+
+    def test_noul_has_no_confidence_on_wire(self):
+        # d1 noul is {type, noul: p} — no confidence field (same as Julia,
+        # unlike GliDE); gating derives max(p, 1-p) family-consistently.
+        parsed = parse_liquid(
+            {"answers": {"urgent": {"type": "noul", "noul": 0.9433475830538234}}},
+            self._heads()[1:2],
+        )
+        entry = parsed["urgent"]
+        assert entry["type"] == "noul" and entry["noul"] == 0.9433475830538234
+        assert entry.get("confidence") is None
+
+    def test_score_shifted_and_legend_dict_keys_shifted(self):
+        # d1 score is a 0-indexed expected level over the criteria array like
+        # Drex/GliDE; probabilities and legend arrive as dicts keyed by index
+        # STRINGS, so the legend keys shift directly (and no expected_level
+        # extra — d1 doesn't send one).
+        resp = {
+            "answers": {
+                "risk": {
+                    "type": "score",
+                    "score": 1.1236947306289335,
+                    "confidence": 0.6654486317493788,
+                    "probabilities": {
+                        "0": 0.04966975743574022,
+                        "1": 0.7769657544995859,
+                        "2": 0.1733644880646738,
+                    },
+                    "legend": {"0": "low", "1": "medium", "2": "high"},
+                }
+            }
+        }
+        parsed = parse_liquid(resp, self._heads()[2:])
+        entry = parsed["risk"]
+        assert entry["score"] == pytest.approx(2.1236947306289335)  # 1 (score_min) + 1.1237
+        assert entry["legend"] == {"1": "low", "2": "medium", "3": "high"}
+        assert "expected_level" not in entry
+        assert entry["confidence"] == 0.6654486317493788
+
+    def test_legend_null_synthesized_from_score_criteria(self):
+        # A null legend falls back to the criteria array _liquid_wire sent
+        # (head._score_criteria()), keyed by the shifted index strings.
+        resp = {
+            "answers": {
+                "risk": {
+                    "type": "score",
+                    "score": 2.5,
+                    "confidence": 0.5,
+                    "legend": None,
+                }
+            }
+        }
+        parsed = parse_liquid(resp, self._heads()[2:])
+        assert parsed["risk"]["legend"] == {
+            "1": "low",
+            "2": "medium",
+            "3": "high",
+            "4": "very high",
+            "5": "extreme",
+        }
+
+    def test_missing_answer_declined(self):
+        parsed = parse_liquid({"answers": {}}, self._heads())
+        assert parsed["diff_type"].get("label") is None
+        assert parsed["diff_type"].get("_declined") is not None
+
+    def test_no_answers_envelope(self):
+        parsed = parse_liquid({"model": "d1"}, self._heads())
+        assert all(parsed[h.id].get("_declined") == "no-answers" for h in self._heads())
+
+    def test_live_probe_shapes(self):
+        # Response shapes captured verbatim from the 2026-10-05 live d1
+        # probes — the text System One call and the 64x64 solid-blue PNG
+        # (the vision call that motivated the second chance).
+        text = parse_liquid(
+            {
+                "model": "d1",
+                "answers": {
+                    "department": {
+                        "type": "choice",
+                        "choice": "billing",
+                        "probabilities": {
+                            "billing": 0.9305552282044707,
+                            "technical": 0.06740919062018329,
+                            "sales": 0.002035581175345831,
+                        },
+                        "confidence": 0.8958328423067061,
+                    },
+                    "is_urgent": {"type": "noul", "noul": 0.9433475830538234},
+                    "frustration": {
+                        "type": "score",
+                        "score": 1.1236947306289335,
+                        "confidence": 0.6654486317493788,
+                        "probabilities": {
+                            "0": 0.04966975743574022,
+                            "1": 0.7769657544995859,
+                            "2": 0.1733644880646738,
+                        },
+                        "legend": {"0": "Calm", "1": "Frustrated", "2": "Very angry"},
+                    },
+                },
+                "usage": {"input_tokens": 171, "output_tokens": 0, "cost": 0.00000684},
+            },
+            [
+                make_choice("Which team owns this?", ["billing", "technical", "sales"], id="department"),
+                make_noul("Does this convey urgency?", id="is_urgent"),
+                make_score(
+                    "How frustrated is the customer?",
+                    id="frustration",
+                    score_min=1,
+                    score_max=3,
+                    legend=["Calm", "Frustrated", "Very angry"],
+                ),
+            ],
+        )
+        assert text["department"]["label"] == "billing"
+        assert text["department"]["confidence"] == 0.8958328423067061
+        assert text["is_urgent"]["noul"] == 0.9433475830538234
+        assert text["frustration"]["score"] == pytest.approx(2.1236947306289335)
+        assert text["frustration"]["legend"]["2"] == "Frustrated"
+
+        vision = parse_liquid(
+            {
+                "model": "d1",
+                "answers": {
+                    "color": {
+                        "type": "choice",
+                        "choice": "blue",
+                        "probabilities": {"blue": 0.9999709452492574},
+                        "confidence": 0.9999564178738862,
+                    },
+                    "shows_text": {"type": "noul", "noul": 0.0024726234139117557},
+                },
+                "usage": {"input_tokens": 48, "output_tokens": 0},
+            },
+            [
+                make_choice("What color is the image?", ["red", "green", "blue"], id="color"),
+                make_noul("Does the image contain text?", id="shows_text"),
+            ],
+        )
+        assert vision["color"]["label"] == "blue"
+        assert vision["color"]["confidence"] == 0.9999564178738862
+        assert vision["shows_text"]["noul"] == 0.0024726234139117557

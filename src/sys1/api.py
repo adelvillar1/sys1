@@ -33,6 +33,7 @@ def classify(
     log: bool = True,
     input_sha256: str | None = None,
     extra_log_fields: dict[str, Any] | None = None,
+    images: list | None = None,
 ) -> ClassifyResult:
     """
     Run one or more decision-model providers over `text` for a named task.
@@ -45,6 +46,10 @@ def classify(
         log: when True (default), append a JSONL record (the calibration set).
         input_sha256: hash to log alongside the answers; defaults to the hash
             of `text` so feedback rows can join back.
+        extra_log_fields: extra keys merged into the JSONL record.
+        images: optional list of base64 image payloads (data URLs or
+            {content_type, base64} objects) for vision-capable providers
+            (liquid); text-only wires ignore them.
 
     Returns:
         `ClassifyResult` with per-provider answers, telemetry, and a verdict.
@@ -63,7 +68,9 @@ def classify(
             continue
         try:
             prov_telemetry: dict[str, Any] = {}
-            result = _providers.call_provider(pid, text, head_list, cfg, prov_telemetry)
+            result = _providers.call_provider(
+                pid, text, head_list, cfg, prov_telemetry, images=images
+            )
             answers[pid] = result
             telemetry[pid] = prov_telemetry
         except Exception as e:  # fail-open: a broken provider never breaks the gate
@@ -108,7 +115,7 @@ def classify(
     )
 
     if log:
-        _log_classify(result, cfg, text, input_sha256, extra_log_fields)
+        _log_classify(result, cfg, text, input_sha256, extra_log_fields, images=images)
 
     return result
 
@@ -124,6 +131,7 @@ def cascade_classify(
     *,
     confidence_floor: float | None = None,
     log: bool = True,
+    images: list | None = None,
 ) -> ClassifyResult:
     """
     Walk a chain of providers in order. Stop as soon as one returns every head
@@ -143,7 +151,10 @@ def cascade_classify(
     floor; below that the ladder matches `interpret()` — per-provider config
     key > head `floor` > task > global > provider default. Noul answers with
     no explicit confidence gate on the derived certainty (Jev's 0-1 output),
-    same as `interpret()`.
+    same as `interpret()`. `images` (optional) is forwarded like `classify()`:
+    only vision-capable providers in the chain (liquid) can see them — name
+    it explicitly when the input is visual, so the answer doesn't come from a
+    text-only head of the chain.
     """
     cfg = cfg or load_config()
     resolved_task = _resolve_task(task)
@@ -166,7 +177,9 @@ def cascade_classify(
             continue
         try:
             tele: dict[str, Any] = {}
-            prov_answers = _providers.call_provider(pid, text, head_list, cfg, tele)
+            prov_answers = _providers.call_provider(
+                pid, text, head_list, cfg, tele, images=images
+            )
             answers[pid] = prov_answers
             telemetry[pid] = tele
             providers_used.append(pid)
@@ -419,6 +432,7 @@ def _log_classify(
     text: str,
     input_sha256: str | None = None,
     extra_log_fields: dict[str, Any] | None = None,
+    images: list | None = None,
 ) -> None:
     payload = {
         "op": "classify",
@@ -437,6 +451,9 @@ def _log_classify(
         "telemetry": result.telemetry,
         "confidence_histogram": confidence_histogram(result.answers),
     }
+    if images:
+        # count only — image content is never logged (same line as redact_fields)
+        payload["image_count"] = len(images)
     if extra_log_fields:
         payload.update(extra_log_fields)
     log_record(payload, cfg=cfg)

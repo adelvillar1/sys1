@@ -16,7 +16,7 @@ from sys1.types import Provider, Task, make_choice, make_noul
 
 
 def _fixed_provider(pid: str, answers: dict) -> Provider:
-    def _fn(text, heads, cfg, tele):
+    def _fn(text, heads, cfg, tele, images=None):
         return {h.id: dict(answers.get(h.id, {"_declined": "no-answer", "confidence": 0.0})) for h in heads}
 
     return Provider(id=pid, name=pid, classify=_fn, is_available=lambda c: True)
@@ -26,7 +26,7 @@ def _scripted_provider(pid: str, script: list[dict]) -> Provider:
     """Each classify draw pops the next answer map (last one repeats)."""
     draws = iter(script)
 
-    def _fn(text, heads, cfg, tele):
+    def _fn(text, heads, cfg, tele, images=None):
         try:
             answers = next(draws)
         except StopIteration:

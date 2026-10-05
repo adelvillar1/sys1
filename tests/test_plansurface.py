@@ -296,7 +296,7 @@ STUB_ANSWERS: dict[str, dict] = {
 }
 
 
-def _stub_classify(text, heads, cfg, tele):
+def _stub_classify(text, heads, cfg, tele, images=None):
     return {h.id: dict(STUB_ANSWERS[h.id]) for h in heads if h.id in STUB_ANSWERS}
 
 

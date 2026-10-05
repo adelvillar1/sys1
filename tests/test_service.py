@@ -54,7 +54,7 @@ def client(service_module):
 
 @pytest.fixture
 def fake_high_provider():
-    def classify(text: str, heads: list[Head], cfg: dict, tele: dict) -> dict[str, Answer]:
+    def classify(text: str, heads: list[Head], cfg: dict, tele: dict, images: list | None = None) -> dict[str, Answer]:
         tele["http_status"] = 200
         return {h.id: {"label": h.labels[0] if h.labels else "x", "confidence": 0.9, "type": h.kind} for h in heads}
 

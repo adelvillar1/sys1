@@ -841,3 +841,231 @@ class TestJuliaProvider:
             for name in ("FASTINO_API_KEY", "DREX_API_KEY", "TYPESAFE_API_KEY"):
                 os.environ.pop(name, None)
         assert "julia" in routing._SIZE_EXCLUDED
+
+
+class TestLiquidProvider:
+    def _heads(self):
+        return sys1.heads_for("change", "liquid")
+
+    def test_liquid_needs_key(self, cfg):
+        import os
+
+        os.environ.pop("LIQUID_API_KEY", None)
+        assert is_available("liquid", cfg) is False
+        os.environ["LIQUID_API_KEY"] = "liquid-test"
+        try:
+            assert is_available("liquid", cfg) is True
+        finally:
+            os.environ.pop("LIQUID_API_KEY", None)
+
+    def test_call_liquid_wire_request_and_usage(self, cfg):
+        import os
+
+        os.environ["LIQUID_API_KEY"] = "liquid-test"
+        try:
+            # d1 response values captured verbatim from the 2026-10-05 live
+            # probe (docs/plans/2026-10-05-liquid-d1-provider.md): d1 speaks
+            # the TypeSafe System One wire like jev/drex/glide/julia.
+            resp_body = {
+                "model": "d1",
+                "answers": {
+                    "diff_type": {
+                        "type": "choice",
+                        "choice": "fix",
+                        "probabilities": {
+                            "fix": 0.9305552282044707,
+                            "refactor": 0.06740919062018329,
+                        },
+                        "confidence": 0.8958328423067061,
+                    },
+                    "risk_tier": {
+                        "type": "choice",
+                        "choice": "low",
+                        "probabilities": {"low": 0.6, "medium": 0.3, "high": 0.1},
+                        "confidence": 0.4,
+                    },
+                    "breaking_change": {"type": "noul", "noul": 0.9433475830538234},
+                },
+                "usage": {"input_tokens": 171, "output_tokens": 0, "cost": 0.00000684},
+            }
+            captured = {}
+
+            def _fake_urlopen(req, timeout=None):
+                captured["url"] = req.full_url
+                captured["body"] = json.loads(req.data.decode())
+                captured["headers"] = dict(req.header_items())
+                return _make_resp(200, json.dumps(resp_body).encode())
+
+            with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+                tele: dict = {}
+                result = sys1.call_provider("liquid", "diff text", self._heads(), cfg, tele)
+
+            # request shape: the /decisions/v1/systemone origin, a plain-string
+            # state, Drex-shape questions (d1's validation is as strict as
+            # Drex's) — unlike julia, no idempotency/UA headers required
+            assert captured["url"] == cfg["providers"]["liquid_api_url"]
+            assert captured["url"] == "https://api.liquid.ai/decisions/v1/systemone"
+            assert captured["body"]["model"] == "d1"
+            assert captured["body"]["state"] == "diff text"
+            assert "images" not in captured["body"]  # a text-only call stays minimal
+            assert "id" not in next(iter(captured["body"]["questions"].values()))
+            noul_q = next(
+                q for q in captured["body"]["questions"].values() if q["type"] == "noul"
+            )
+            assert isinstance(noul_q["instructions"], str) and noul_q["instructions"]
+            assert set(noul_q["criteria"].keys()) == {"true", "false"}
+            auth = captured["headers"].get("Authorization") or captured["headers"].get(
+                "authorization"
+            )
+            assert auth == "Bearer liquid-test"
+            # answers normalize to the shared wire; choice confidence is the
+            # Jev-family distribution statistic, kept as returned; noul
+            # answers carry no confidence field
+            assert result["diff_type"]["label"] == "fix"
+            assert result["diff_type"]["confidence"] == 0.8958328423067061
+            assert result["breaking_change"]["noul"] == 0.9433475830538234
+            assert result["breaking_change"].get("confidence") is None
+            # d1's usage payload maps onto the contract keys + cost extra
+            assert tele["http_status"] == 200
+            assert tele["structured_ok"] is True
+            assert tele["token_prompt"] == 171
+            assert tele["token_completion"] == 0
+            assert tele["token_total"] == 171
+            assert tele["cost_usd"] == 0.00000684
+        finally:
+            os.environ.pop("LIQUID_API_KEY", None)
+
+    def test_images_passthrough(self, cfg):
+        import os
+
+        os.environ["LIQUID_API_KEY"] = "liquid-test"
+        try:
+            captured = {}
+
+            def _fake_urlopen(req, timeout=None):
+                captured["body"] = json.loads(req.data.decode())
+                return _make_resp(
+                    200,
+                    json.dumps(
+                        {
+                            "answers": {
+                                "diff_type": {
+                                    "type": "choice",
+                                    "choice": "fix",
+                                    "confidence": 0.9,
+                                }
+                            }
+                        }
+                    ).encode(),
+                )
+
+            with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+                tele: dict = {}
+                sys1.call_provider(
+                    "liquid",
+                    "screenshot",
+                    self._heads(),
+                    cfg,
+                    tele,
+                    images=[
+                        "data:image/png;base64,AAAA",
+                        {"content_type": "image/jpeg", "base64": "BBBB"},
+                    ],
+                )
+            # the OpenJev extension: images ride in the body (both shapes d1
+            # accepts), only the count lands in telemetry
+            assert captured["body"]["images"] == [
+                "data:image/png;base64,AAAA",
+                {"content_type": "image/jpeg", "base64": "BBBB"},
+            ]
+            assert tele["image_count"] == 2
+        finally:
+            os.environ.pop("LIQUID_API_KEY", None)
+
+    def test_state_truncated_by_liquid_max_chars(self, cfg):
+        import os
+
+        os.environ["LIQUID_API_KEY"] = "liquid-test"
+        cfg["providers"]["liquid_max_chars"] = 4
+        try:
+            captured = {}
+
+            def _fake_urlopen(req, timeout=None):
+                captured["body"] = json.loads(req.data.decode())
+                return _make_resp(200, json.dumps({"answers": {}}).encode())
+
+            with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+                sys1.call_provider("liquid", "abcdefghij", self._heads(), cfg, {})
+            assert captured["body"]["state"] == "abcd"  # not scan.max_diff_chars
+        finally:
+            os.environ.pop("LIQUID_API_KEY", None)
+
+    def test_heads_for_inherits_jev_set(self):
+        assert [h.id for h in self._heads()] == [
+            h.id for h in sys1.heads_for("change", "jev")
+        ]
+
+    def test_422_validation_fails_fast(self, cfg):
+        import os
+
+        os.environ["LIQUID_API_KEY"] = "liquid-test"
+        try:
+            # d1's validation is strict (as strict as Drex's): a malformed
+            # question shape is a 422, and http_post_json surfaces it
+            # immediately — no retry
+            err = urllib.error.HTTPError(
+                "u", 422, "Unprocessable Entity", {}, io.BytesIO(b'{"detail":"bad question"}')
+            )
+            with (
+                patch("urllib.request.urlopen", side_effect=err),
+                pytest.raises(RuntimeError) as exc,
+            ):
+                sys1.call_provider("liquid", "diff", self._heads(), cfg, {})
+            assert "422" in str(exc.value)
+        finally:
+            os.environ.pop("LIQUID_API_KEY", None)
+
+    def test_config_view_is_url_kind(self, cfg):
+        from sys1.providers import provider_config_view
+
+        view = provider_config_view("liquid", cfg)
+        assert view["kind"] == "url"
+        assert view["api_key_env"] == "LIQUID_API_KEY"
+        assert view["requires_key"] is True
+        assert view["model"] == cfg["providers"]["liquid_model"]
+
+    def test_floor_registered(self):
+        from sys1.gating import _DEFAULT_FLOORS
+
+        assert _DEFAULT_FLOORS["liquid"] == 0.7
+
+    def test_in_core_roster(self):
+        assert "liquid" in resolve_providers("core")
+        assert "liquid" in resolve_providers("all")
+
+    def test_routing_default_chain_unchanged_and_not_size_excluded(self, cfg):
+        import os
+
+        from sys1 import routing
+        from sys1.tasks import get_task
+
+        # liquid is registered but NOT in the default chain (same posture as
+        # julia: waits on calibration evidence); d1's 65,536-token window
+        # (liquid_max_chars = 150K chars of state) exceeds the router's
+        # long-input threshold, so it never needs the size-gate exclusion
+        os.environ["FASTINO_API_KEY"] = "fk-test"
+        os.environ["DREX_API_KEY"] = "sk-test"
+        os.environ["TYPESAFE_API_KEY"] = "ts-test"
+        os.environ["LIQUID_API_KEY"] = "liquid-test"
+        try:
+            task = get_task("change")
+            assert routing.route(task, "short text", cfg) == ["glide", "drex", "jev"]
+        finally:
+            for name in (
+                "FASTINO_API_KEY",
+                "DREX_API_KEY",
+                "TYPESAFE_API_KEY",
+                "LIQUID_API_KEY",
+            ):
+                os.environ.pop(name, None)
+        assert "liquid" not in routing._SIZE_EXCLUDED

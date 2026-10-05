@@ -34,6 +34,7 @@ from .parsers import (
     parse_gliner2,
     parse_jev,
     parse_julia,
+    parse_liquid,
     parse_modernbert,
 )
 from .types import Answer, Head, Provider
@@ -158,7 +159,13 @@ def _sleep_backoff(backoff: float, attempt: int) -> None:
 def _openai_wire(pid: str, *, system_prompt: str | None = None):
     """Classify fn for OpenAI-compatible chat-completions with a `classifications` schema."""
 
-    def _fn(text: str, heads: list[Head], cfg: dict, telemetry: dict) -> dict[str, Answer]:
+    def _fn(
+        text: str,
+        heads: list[Head],
+        cfg: dict,
+        telemetry: dict,
+        images: list | None = None,
+    ) -> dict[str, Answer]:
         pcfg = cfg["providers"]
         api_key = api_key_for(pid, cfg)
         if _requires_key(pid, cfg) and not api_key:
@@ -200,7 +207,13 @@ def _openai_wire(pid: str, *, system_prompt: str | None = None):
 def _jev_wire(pid: str):
     """Classify fn for the TypeSafe /v1/systemone shape ({state, questions})."""
 
-    def _fn(text: str, heads: list[Head], cfg: dict, telemetry: dict) -> dict[str, Answer]:
+    def _fn(
+        text: str,
+        heads: list[Head],
+        cfg: dict,
+        telemetry: dict,
+        images: list | None = None,
+    ) -> dict[str, Answer]:
         pcfg = cfg["providers"]
         api_key = api_key_for(pid, cfg)
         if _requires_key(pid, cfg) and not api_key:
@@ -244,7 +257,13 @@ def _drex_wire(pid: str):
     http_post_json's existing backoff; 401/402/422 fail fast.
     """
 
-    def _fn(text: str, heads: list[Head], cfg: dict, telemetry: dict) -> dict[str, Answer]:
+    def _fn(
+        text: str,
+        heads: list[Head],
+        cfg: dict,
+        telemetry: dict,
+        images: list | None = None,
+    ) -> dict[str, Answer]:
         pcfg = cfg["providers"]
         api_key = api_key_for(pid, cfg)
         if _requires_key(pid, cfg) and not api_key:
@@ -303,7 +322,13 @@ def _glide_wire(pid: str):
     Retry policy matches http_post_json defaults: 429/5xx retry, 4xx fail fast.
     """
 
-    def _fn(text: str, heads: list[Head], cfg: dict, telemetry: dict) -> dict[str, Answer]:
+    def _fn(
+        text: str,
+        heads: list[Head],
+        cfg: dict,
+        telemetry: dict,
+        images: list | None = None,
+    ) -> dict[str, Answer]:
         pcfg = cfg["providers"]
         api_key = api_key_for(pid, cfg)
         if _requires_key(pid, cfg) and not api_key:
@@ -360,7 +385,13 @@ def _julia_wire(pid: str):
     Retry policy matches http_post_json defaults: 429/5xx retry, 4xx fail fast.
     """
 
-    def _fn(text: str, heads: list[Head], cfg: dict, telemetry: dict) -> dict[str, Answer]:
+    def _fn(
+        text: str,
+        heads: list[Head],
+        cfg: dict,
+        telemetry: dict,
+        images: list | None = None,
+    ) -> dict[str, Answer]:
         pcfg = cfg["providers"]
         api_key = api_key_for(pid, cfg)
         if _requires_key(pid, cfg) and not api_key:
@@ -394,6 +425,81 @@ def _julia_wire(pid: str):
     return _fn
 
 
+def _liquid_wire(pid: str):
+    """
+    Classify fn for Liquid AI d1 — the TypeSafe System One API as implemented
+    at api.liquid.ai/decisions/v1/systemone (probed live 2026-10-05; evidence
+    quoted in docs/plans/2026-10-05-liquid-d1-provider.md).
+
+    Deltas vs _drex_wire:
+      - state is bounded by `liquid_max_chars`: d1 caps each prompt (every
+        question re-renders the whole state, images included) at 65,536
+        tokens and 250KB of text. Probed at ~4.4 chars/token on prose
+        (9,639 chars -> 2,173 tokens), so the 150K-char bound keeps dense
+        text under the cap with headroom. Window overflow returns 422.
+      - `images` — the OpenJev extension to the System One API: up to 8
+        images per request as base64 `data:image/...` URLs or
+        `{content_type, base64}` objects, sent only when the caller passes
+        them. d1 is the pool's first vision-capable provider. Images precede
+        the state in the prompt, every question sees all of them, and they
+        bill at 1.5 tokens per 32x32 patch against the same prompt cap.
+      - Strict validation like Drex/GliDE/Julia: questions go through
+        Head.to_drex_head() (no `id` field; noul criteria under `true`/`false`;
+        score criteria an ordered array) — a wrong shape 422s.
+      - usage maps input_tokens/output_tokens onto the contract telemetry
+        keys (same as Drex/GliDE/Julia); `cost` (USD, present on priced
+        models) rides along as an extra for the calibration stream.
+      - confidence on choice/score is the Jev-family distribution statistic
+        (N*max_prob - 1)/(N - 1), NOT a margin — parse_liquid keeps it as
+        returned; noul answers carry no confidence field.
+    Retry policy matches http_post_json defaults: 429/5xx retry, 4xx (incl.
+    Liquid's 422 validation) fail fast.
+    """
+
+    def _fn(
+        text: str,
+        heads: list[Head],
+        cfg: dict,
+        telemetry: dict,
+        images: list | None = None,
+    ) -> dict[str, Answer]:
+        pcfg = cfg["providers"]
+        api_key = api_key_for(pid, cfg)
+        if _requires_key(pid, cfg) and not api_key:
+            raise RuntimeError(f"${pcfg.get(f'{pid}_api_key_env', pid.upper() + '_API_KEY')} not set")
+        url = pcfg.get(f"{pid}_api_url", "")
+        if not url:
+            raise RuntimeError(f"providers.{pid}_api_url not configured")
+        body = {
+            "model": pcfg.get(f"{pid}_model", pid),
+            "state": text[: pcfg.get("liquid_max_chars", 150_000)],
+            "questions": {h.id: h.to_drex_head() for h in heads},
+        }
+        if images:
+            body["images"] = list(images)
+            telemetry["image_count"] = len(images)
+        resp = http_post_json(
+            url,
+            body,
+            api_key=api_key,
+            timeout=pcfg["request_timeout_seconds"],
+            max_retries=pcfg["max_retries"],
+            backoff=pcfg["retry_backoff_seconds"],
+            telemetry=telemetry,
+            label=pid,
+        )
+        usage = resp.get("usage") or {}
+        if usage.get("input_tokens") is not None:
+            telemetry["token_prompt"] = usage.get("input_tokens")
+            telemetry["token_completion"] = usage.get("output_tokens")
+            telemetry["token_total"] = (usage.get("input_tokens") or 0) + (usage.get("output_tokens") or 0)
+        if resp.get("usage", {}).get("cost") is not None:
+            telemetry["cost_usd"] = resp["usage"]["cost"]
+        return parse_liquid(resp, heads)
+
+    return _fn
+
+
 def _gliner_wire(pid: str, model_key: str = "local_model"):
     """
     Classify fn for GLiNER2-family models, using the fastino-prescribed API
@@ -408,7 +514,13 @@ def _gliner_wire(pid: str, model_key: str = "local_model"):
     the server configured but unreachable the wire falls back automatically.
     """
 
-    def _fn(text: str, heads: list[Head], cfg: dict, telemetry: dict) -> dict[str, Answer]:
+    def _fn(
+        text: str,
+        heads: list[Head],
+        cfg: dict,
+        telemetry: dict,
+        images: list | None = None,
+    ) -> dict[str, Answer]:
         model = cfg["providers"].get(model_key) or cfg["providers"]["local_model"]
         spec = classification_schema_spec(heads)
         max_chars = cfg["scan"]["max_diff_chars"]
@@ -533,7 +645,7 @@ def _requires_key(pid: str, cfg: dict) -> bool:
     explicit = pcfg.get(f"{pid}_requires_key")
     if explicit is not None:
         return bool(explicit)
-    if pid in ("decide", "jev", "drex", "glide", "julia"):
+    if pid in ("decide", "jev", "drex", "glide", "julia", "liquid"):
         return True
     url = pcfg.get(f"{pid}_api_url", "")
     if url:
@@ -752,7 +864,13 @@ except Exception as e:
 """
 
 
-def _modernbert_classify(text: str, heads: list[Head], cfg: dict, telemetry: dict) -> dict[str, Answer]:
+def _modernbert_classify(
+    text: str,
+    heads: list[Head],
+    cfg: dict,
+    telemetry: dict,
+    images: list | None = None,
+) -> dict[str, Answer]:
     venv_python = _local_venv_python(cfg)
     if not venv_python.exists():
         raise RuntimeError(f"Local venv not found at {venv_python}")
@@ -880,6 +998,23 @@ register(
         tier="core",
         wire="jev",
         meta={"setup": "set SUPERSONIC_API_KEY (repo .env, gitignored); docs: supersoniclabs.ai"},
+    )
+)
+register(
+    Provider(
+        id="liquid",
+        name="Liquid AI d1 (hosted)",
+        classify=_liquid_wire("liquid"),
+        is_available=_hosted_available("liquid"),
+        is_configured=_hosted_available("liquid"),
+        description="Liquid's decision model on the TypeSafe System One API "
+        "(/decisions/v1/systemone) with a 65,536-token prompt window and the pool's only "
+        "native vision: up to 8 base64 images per request alongside the state. Plain-string "
+        "state; noul/choice/score; choice/score confidence is the Jev-family distribution "
+        "statistic (N*max-1)/(N-1); $0.04 per 1M input tokens, $0 output (probed 2026-10-05).",
+        tier="core",
+        wire="jev",
+        meta={"setup": "set LIQUID_API_KEY (repo .env, gitignored); docs: docs.liquid.ai + api.liquid.ai/decisions/v1/models"},
     )
 )
 register(
@@ -1202,8 +1337,18 @@ def resolve_providers(spec: str | list[str]) -> list[str]:
 
 
 def call_provider(
-    provider_id: str, text: str, heads: list[Head], cfg: dict, telemetry: dict | None = None
+    provider_id: str,
+    text: str,
+    heads: list[Head],
+    cfg: dict,
+    telemetry: dict | None = None,
+    images: list | None = None,
 ) -> dict[str, Answer]:
+    """
+    Call one provider. `images` (optional) is a list of base64 image payloads
+    (data URLs or {content_type, base64} objects) forwarded to wires that
+    accept them (liquid's native vision); text-only wires ignore it.
+    """
     provider = REGISTRY.get(provider_id)
     if provider is None:
         raise KeyError(f"unknown provider {provider_id!r}; known: {sorted(REGISTRY)}")
@@ -1215,7 +1360,7 @@ def call_provider(
     if not provider.is_available(cfg):
         raise RuntimeError(f"provider {provider_id!r} unavailable: {availability_reason(provider_id, cfg)}")
     tele = telemetry if telemetry is not None else {}
-    return provider.classify(text, heads, cfg, tele)
+    return provider.classify(text, heads, cfg, tele, images=images)
 
 
 def is_available(provider_id: str, cfg: dict) -> bool:

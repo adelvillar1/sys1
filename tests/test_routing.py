@@ -93,7 +93,7 @@ class TestRouteDecision:
 # ── cascade_classify integration ─────────────────────────────────────────────
 
 
-def _good_answers(pid, text, heads, cfg, tele):
+def _good_answers(pid, text, heads, cfg, tele, images=None):
     """Every head clears its floor, so the first chain member wins."""
     out = {}
     for h in heads:

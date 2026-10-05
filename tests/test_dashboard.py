@@ -169,7 +169,7 @@ class TestProbeEndpoint:
 
 @pytest.fixture
 def fake_ready_provider():
-    def classify(text: str, heads: list[Head], cfg: dict, tele: dict) -> dict[str, Answer]:
+    def classify(text: str, heads: list[Head], cfg: dict, tele: dict, images: list | None = None) -> dict[str, Answer]:
         return {h.id: {"label": h.labels[0] if h.labels else "x", "confidence": 0.9, "type": h.kind} for h in heads}
 
     p = Provider(id="fake_dash", name="fake", classify=classify, is_available=lambda c: True)

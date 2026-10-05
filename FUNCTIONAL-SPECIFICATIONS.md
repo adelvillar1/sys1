@@ -25,7 +25,7 @@ This is the user-flow contract — what the system does from a caller's perspect
 
 ## 1. Classification Behavior
 
-- Caller invokes `sys1.classify(provider, task, text)`.
+- Caller invokes `sys1.classify(provider, task, text)` — plus an optional `images` list when the input is visual (only vision-capable providers, currently `liquid`, receive it).
 - System resolves the task (registered name or inline `Task` instance).
 - Resolves provider ids (aliases: `both`, `all`, `core`, `optin`, comma-separated).
 - Filters providers by `providers.enabled` flag and `is_available()` check.
@@ -98,8 +98,9 @@ A head floor scalar applies in the **serving provider's own** confidence semanti
 
 ## 4. Provider Management
 
-- Four core providers (`decide`, `jev`, `local`, `modernbert`) are enabled by default. **`decide` means the hosted Fastino wire; the Decide *model* is what `local` runs** — hosted is not on any consumer's default path.
+- Eight core providers (`decide`, `jev`, `drex`, `glide`, `julia`, `liquid`, `local`, `modernbert`) are enabled by default. **`decide` means the hosted Fastino wire; the Decide *model* is what `local` runs** — hosted is not on any consumer's default path.
 - Seven candidate providers (`clm`, `openjev`, `kev`, `tev1`, `laya`, `decide_1b`, `decide_multi`) are opt-in: add to `providers.enabled` and configure their endpoint.
+- `liquid` (Liquid AI `d1`) is the pool's only vision-capable provider: `classify()`/`cascade_classify()` accept an optional `images` list (up to 8 base64 images per request; the log records the count, never the payload). The free `d1:free` model is never used (user constraint 2026-10-05) — the wire pins `d1`.
 - The `gliner` wire (`local`, `decide_1b`, `decide_multi`) uses the fastino-prescribed classification API with two serving modes: the load-once classifier server (`providers.local_server_url`, per-provider `{pid}_server_url`; run one server per model) or the venv subprocess fallback. Answer shapes are identical; telemetry records `mode` and any `server_fallback` reason.
 - `sys1 doctor` prints availability reasons per provider (key missing, venv absent, no listener) — a configured classifier server that answers counts as available.
 - `sys1 providers --all` prints the full registry with flag state.

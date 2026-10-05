@@ -470,15 +470,16 @@ def list_tasks() -> list[str]:
 def heads_for(task: Task | str, provider: str) -> list[Head]:
     """Pick the head set for a given provider, falling back to the task default.
 
-    Drex and GLiDE have no per-task overrides of their own: both are Jev-class
-    (same noul/choice/score primitives, same calibrated-probability semantics),
-    so they inherit the `jev` head set wherever one is defined. Tasks that
-    never gave jev its own heads fall through to the task default for all three.
+    Drex, GLiDE, Julia, and Liquid have no per-task overrides of their own:
+    all four are Jev-class (same noul/choice/score primitives, same
+    calibrated-probability semantics), so they inherit the `jev` head set
+    wherever one is defined. Tasks that never gave jev its own heads fall
+    through to the task default for all of them.
     """
     t = _TASKS.get(task) if isinstance(task, str) else task
     if t is None:
         raise KeyError(f"unknown task {task!r}; known: {sorted(_TASKS)}")
-    if provider in ("drex", "glide", "julia") and provider not in t.provider_heads:
+    if provider in ("drex", "glide", "julia", "liquid") and provider not in t.provider_heads:
         provider = "jev"
     return t.provider_heads.get(provider, t.heads)
 

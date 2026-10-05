@@ -17,7 +17,7 @@ import sys1
 def _mock_decide(answers):
     """Build a classify function that returns the given answers dict."""
 
-    def _fn(text, heads, cfg, tele):
+    def _fn(text, heads, cfg, tele, images=None):
         return {h.id: dict(answers.get(h.id, {"_raw": "", "confidence": 0.0})) for h in heads}
 
     return _fn
@@ -113,6 +113,45 @@ class TestClassify:
         assert "confidence_histogram" in record
         assert "input_sha256" in record
 
+    def test_images_forwarded_to_provider_and_logged_as_count(self, cfg, tmp_path):
+        """The optional `images` kwarg reaches the provider's classify fn (only
+        vision-capable wire fns emit them), and the log record carries the
+        count — never the image content."""
+        from sys1.types import Provider
+
+        seen = {}
+
+        def _fn(text, heads, cfg, tele, images=None):
+            seen["images"] = images
+            return {
+                h.id: {"type": "choice", "label": h.labels[0], "confidence": 0.9}
+                for h in heads
+            }
+
+        provider = Provider(id="fake_img", name="fake img", classify=_fn, is_available=lambda c: True)
+        sys1.register(provider)
+        try:
+            result = sys1.classify(
+                "fake_img",
+                "change",
+                "diff text",
+                cfg=cfg,
+                log=True,
+                images=["data:image/png;base64,AAAA", {"content_type": "image/jpeg", "base64": "BBBB"}],
+            )
+            assert result.verdict == "pass"
+            assert seen["images"] == [
+                "data:image/png;base64,AAAA",
+                {"content_type": "image/jpeg", "base64": "BBBB"},
+            ]
+            logs = list((tmp_path / "logs").rglob("events.jsonl"))
+            assert logs, "expected exactly one events.jsonl"
+            record = json.loads(logs[0].read_text().splitlines()[0])
+            assert record["image_count"] == 2
+            assert "data:image" not in logs[0].read_text()
+        finally:
+            sys1.REGISTRY.pop("fake_img", None)
+
 
 class TestCascade:
     def test_high_conf_first_provider_stops_chain(self, cfg, fake_decide, fake_low_conf):
@@ -177,7 +216,7 @@ def _noul_provider(pid: str, prob: float):
     (no explicit confidence — the reason cascade used to never clear)."""
     from sys1.types import Provider
 
-    def _fn(text, heads, cfg, tele):
+    def _fn(text, heads, cfg, tele, images=None):
         return {h.id: {"type": "noul", "noul": prob} for h in heads}
 
     return Provider(id=pid, name=pid, classify=_fn, is_available=lambda c: True)
@@ -227,7 +266,7 @@ class TestCascadeNoulAndHeadFloors:
         the next provider rather than pretend it cleared."""
         from sys1.types import Provider
 
-        def _bool_fn(text, heads, cfg, tele):
+        def _bool_fn(text, heads, cfg, tele, images=None):
             return {h.id: {"type": "noul", "noul": True} for h in heads}
 
         bool_prov = Provider(id="noul_bool", name="bool", classify=_bool_fn, is_available=lambda c: True)
@@ -247,7 +286,7 @@ class TestCascadeNoulAndHeadFloors:
     def test_cascade_honors_head_floor(self, cfg):
         from sys1.types import Provider
 
-        def _fn(text, heads, cfg, tele):
+        def _fn(text, heads, cfg, tele, images=None):
             return {h.id: {"type": "choice", "label": "yes", "confidence": 0.8} for h in heads}
 
         prov = Provider(id="mid_conf", name="mid", classify=_fn, is_available=lambda c: True)

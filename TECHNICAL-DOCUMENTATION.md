@@ -85,7 +85,7 @@ Providers are registered via `sys1.register(Provider(...))` into a global `REGIS
 | Wire | Providers | Request shape |
 |------|-----------|---------------|
 | `openai` | decide, tev1, kev, laya | `/v1/chat/completions` with `classifications` schema |
-| `jev` | jev, drex, glide, clm, openjev | `/v1/systemone` with `{state, questions}` |
+| `jev` | jev, drex, glide, julia, liquid, clm, openjev | `/v1/systemone` with `{state, questions}` (liquid's origin: api.liquid.ai/decisions/v1, plus its `images` extension) |
 | `gliner` | local, decide_1b, decide_multi | fastino-prescribed `gliner2.classification` API — classifier server or subprocess |
 
 Provider id note: **`decide` means the hosted wire** (api.fastino.ai); the Decide *model* is what the `local` provider runs. Hosted is off every consumer's default path — see `docs/plans/2026-09-28-fastino-decide-adoption.md`.
@@ -157,12 +157,25 @@ Heads: `heads_for(task, "glide")` inherits the `jev` head set like drex. Needs `
 
 Heads: `heads_for(task, "julia")` inherits the `jev` head set. Needs `SUPERSONIC_API_KEY` (repo `.env`). **Routing: registered core but NOT in the default chain** — four-way calibration (2026-10-02, six-text change corpus) found julia agreeing with glide AND jev only 1/6 on diff_type and 1/6 on risk_tier (overconfident on disagreeing labels, breaking-change under-detection), failing the cascade's first-provider calibration premise. Position: cheap fast triage head; per-task adoption via `providers.route.by_task` only with fitted floors. It IS in `_SIZE_EXCLUDED` (8,192-token bound) so any custom chain respects the size gate.
 
+### Liquid d1 deltas (probed live 2026-10-05, evidence in docs/plans/2026-10-05-liquid-d1-provider.md)
+
+`liquid` (Liquid AI, `d1`) implements the TypeSafe System One API natively at `https://api.liquid.ai/decisions/v1/systemone` — same state/questions/answers contract as jev/drex/glide/julia — plus the OpenJev `images` extension that makes it the pool's first vision-capable decision model. Deltas handled inside `_liquid_wire` / `parse_liquid`:
+
+- **Images (the OpenJev extension)**: `POST` accepts up to 8 images — base64 `data:image/…;base64,` URLs or `{content_type, base64}` objects (JPEG/PNG/WebP/GIF, 5MB each, 4.5MB request-body cap; remote URLs rejected). Images precede the state in the prompt, every question sees all of them, and each question bills them again: 1.5 input tokens per 32×32 patch, ≤10,000 patches per request, no image >100× as long as wide. `classify()`/`cascade_classify()` take an optional `images` list (forwarded by every wire factory; only `_liquid_wire` emits it); `telemetry["image_count"]` records the count and the JSONL log carries that count, never the payload.
+- **65,536-token prompt window**: every question re-renders the whole state, so `state` is a plain string bounded by `providers.liquid_max_chars` (default 150,000 ≈ headroom at the measured ~4.4 chars/token prose rate); text cap 250KB; either overflow returns 422. The 150K-char bound sits above the router's long-input threshold, so liquid needs no `_SIZE_EXCLUDED` entry.
+- **Confidence semantics: the Jev-family distribution statistic** `(N*max_prob − 1)/(N − 1)` on choice/score — verified byte-equal on the wire (3 options, top1 p=0.9306 → conf 0.8958) — directly thresholdable at the 0.7 family floor, NOT GliDE's margin. noul is `{type, noul: p}` with no confidence field; gating derives `max(p, 1−p)`.
+- **Score is 0-indexed like Drex/GliDE** (shifted by `head.score_min`); `probabilities`/`legend` arrive as dicts keyed by index string, so legend keys shift directly; no `expected_level` extra.
+- **Auth**: plain `Authorization: Bearer` — no idempotency or User-Agent headers required (both were the julia host's quirks). Strict validation like Drex/GliDE/Julia: question shape is `to_drex_head()` verbatim, anything extra is a 422.
+- **Usage keys**: `usage.input_tokens`/`output_tokens` (output always 0) plus `cost` in USD — $0.04 per 1M input tokens, output free; `cost` rides into telemetry as `cost_usd` for the calibration stream.
+
+Heads: `heads_for(task, "liquid")` inherits the `jev` head set. Needs `LIQUID_API_KEY` (repo `.env`). **Routing: registered core but NOT in the default chain** — the calibration gate is the phase-1 close-out; live probes (text change-diff classify + a 64×64 solid-blue PNG read as "blue" at conf 0.99995) confirm wire-level fitness. It is NOT in `_SIZE_EXCLUDED` (150K-char bound, 65,536-token window). The `d1:free` model (text-only, keyless, 32K-token window) is never exercised — user constraint 2026-10-05; the wire pins model `d1`.
+
 ### Routing (cascade default chains)
 
 `routing.route(task, text, cfg)` is the deterministic policy that builds `cascade_classify`'s chain when none is passed explicitly. It is a policy function, not an adaptive router — decision calls are low-volume and near-free at the head of the chain; quality lives in floors and calibration, not model scoring.
 
 1. **Chain source**: `providers.route.by_task[task.id]` override, else `providers.route.default_chain` (default `glide,drex,jev` — hosted-only by design; `local`/`modernbert` are never auto-routed).
-2. **Size gate**: past `providers.route.long_input_chars` (default: `glide_max_chars`), providers whose documented bound cannot take the input (glide) move to the back — drex-first for long inputs.
+2. **Size gate**: past `providers.route.long_input_chars` (default: `glide_max_chars`), providers whose documented bound cannot take the input (glide, julia) move to the back — drex-first for long inputs.
 3. **Availability**: providers that are not enabled+usable right now drop out.
 4. **Task allow-list**: `Task.providers` (e.g. safety's) is a hard filter, preserving chain order.
 
