@@ -35,7 +35,7 @@ and into a *decision contract* is the criteria.
 | Component | File | What it does |
 |-----------|------|--------------|
 | `classify()` | `api.py` | Top-level: resolve → call providers → interpret → log |
-| `cascade_classify()` | `api.py` | Walk a provider chain; stop at the first that clears. Default chain is routed (`routing.route`: glide first for short inputs, drex ahead of it for long ones) |
+| `cascade_classify()` | `api.py` | Walk a provider chain; stop at the first that clears. Default chain is routed (`routing.route`: glide first for short inputs, drex ahead of it for long ones; `vision_qc` overridden to `liquid`) |
 | `Head` / `Task` / `Answer` | `types.py` | Dataclasses: stable head ids, provider wire shapes |
 | `Provider` | `providers.py` | Pluggable registry: 8 core + 7 opt-in candidates |
 | `route()` / `route_decision()` | `routing.py` | Deterministic default-chain policy for the cascade: per-task override, size gate, availability, task allow-list |
@@ -47,7 +47,9 @@ and into a *decision contract* is the criteria.
 | HTTP service | `service/main.py` | FastAPI wrapper, same API, any language |
 | `sys1` CLI | `cli.py` | `classify`, `doctor`, `providers`, `tasks`, `version` |
 
-**[▶ sys1 — model roster and routing](.archify/architecture-sys1-20261005-152027/sys1-architecture.html)** — interactive architecture diagram (open in a browser): the callers, the judgment journey from `classify()` through the routed cascade to the wire factories, the current eight-model roster, and the default chain `glide → drex → jev` with the size gate.
+[![sys1 — model roster and routing](docs/architecture/sys1-architecture.png)](docs/architecture/sys1-architecture.html)
+
+Diagram: [**open the interactive version**](docs/architecture/sys1-architecture.html) in a browser (zoom, focus views, source links) — the callers, the judgment journey from `classify()` through the routed cascade to the wire factories, the current eight-model roster, and the default chain `glide → drex → jev` with the size gate, plus the `vision_qc → liquid` override. Generated with archify; the spec is [`docs/architecture/sys1-architecture.json`](docs/architecture/sys1-architecture.json).
 
 The library is **stdlib-only** at runtime. `urllib` for HTTP providers,
 `subprocess` for the local GLiNER venv. `pip install sys1` adds no hard
@@ -351,6 +353,8 @@ Endpoints:
 | `POST` | `/v1/cascade` | Chain providers; stop at the first that clears |
 | `GET`  | `/v1/health` | Per-provider availability snapshot |
 | `GET`  | `/v1/tasks` | List registered task names + head summaries |
+| `GET`  | `/v1/tasks/{task_id}` | One task's full head/label contract |
+| `POST` | `/v1/feedback` | Record a human label, joined to its classify row by `input_sha256` |
 | `GET`  | `/v1/calibration` | Confidence curve + per-provider accuracy (from the JSONL log) |
 | `GET`  | `/dashboard` | Control dashboard (single-page app) |
 | `GET`  | `/v1/providers` | Full registry view: flags, config shape, availability + reasons |
@@ -470,7 +474,8 @@ sys1/
 │   ├── plansurface.py   plan-surface layers, DAG assembly, reconcile + grade_and_record
 │   ├── api.py           classify(), cascade_classify(), consistency_classify(), health_report()
 │   └── cli.py           sys1 classify / doctor / providers / tasks / version
-├── scripts/             probes: plan-replay, test-surface, AST mutation harness, parity check
+├── scripts/             probes: plan-replay, test-surface, AST mutation harness,
+│                        parity check, vision pair-calibration probe
 ├── tests/               recorded fixtures + mocked transports (stub-provider pattern)
 ├── service/
 │   ├── main.py          FastAPI wrapper (classify/cascade/health/tasks/calibration)

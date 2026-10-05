@@ -43,3 +43,6 @@ CLAUDE.local.md
 
 # Probe corpora (image bytes are never committed; see scripts/vision_probe.py)
 data/
+
+# archify working folder — final artifacts are copied to docs/architecture/
+.archify/

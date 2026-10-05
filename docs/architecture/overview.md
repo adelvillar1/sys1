@@ -4,8 +4,10 @@
 
 The interactive architecture diagram — callers, the `classify()` → cascade →
 wires journey, the current model roster, and the routed default chain — lives
-at [`.archify/architecture-sys1-20261005-152027/sys1-architecture.html`](../../.archify/architecture-sys1-20261005-152027/sys1-architecture.html)
-(open in a browser).
+at [`sys1-architecture.html`](sys1-architecture.html) in this folder (open in
+a browser for zoom, focus views, and source links). Its spec is
+[`sys1-architecture.json`](sys1-architecture.json); a static desktop render is
+[`sys1-architecture.png`](sys1-architecture.png).
 
 <add-when-implemented>
 - Module dependency diagram
