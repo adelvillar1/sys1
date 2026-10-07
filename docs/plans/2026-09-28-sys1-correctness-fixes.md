@@ -1,7 +1,7 @@
 ---
-status: active
+status: completed
 created: 2026-09-28
-updated: 2026-09-28
+updated: 2026-10-07
 slug: sys1-correctness-fixes
 ---
 
@@ -60,18 +60,20 @@ High-level steps:
 
 These are the contract. Each one is a verifiable assertion. The work is "done" when every box is checked.
 
-- [ ] A `noul` head served by decide/local/candidates with a `{"label": "no", "confidence": 0.93}` answer produces `verdict: "pass"` (not escalate) when confidence ≥ floor.
-- [ ] `safety` task with `providers = ["decide"]` passes when the provider returns `destructive=no, reversible=yes` with confidence ≥ 0.7.
-- [ ] `/v1/calibration` returns HTTP 200 with a non-empty `providers[pid].histogram` array when the log contains classify records for a 2-head task.
-- [ ] `/v1/calibration` returns HTTP 200 (not 500) when the log contains records for a task with 6+ heads.
-- [ ] `classify()` with `block_on_classification=True` and a below-floor answer returns `verdict: "block"`.
-- [ ] `final_exit_code(escalated=True, cfg with block_on_classification=True)` returns `2`.
-- [ ] A `Task` with `confidence_floor=0.99` and a 0.80 answer returns `verdict: "escalate"`.
-- [ ] `cascade_classify` stops after the first provider when all real heads clear the floor, even if the provider also returned `_unmatched:*` junk keys.
-- [ ] Local/modernbert providers with malformed subprocess output log `structured_ok: False, error_kind: "json"`.
-- [ ] `ruff check .` exits 0 (34 errors resolved).
-- [ ] Full test suite passes (`pytest -q`).
-- [ ] No existing test is broken by the changes.
+*All boxes verified 2026-10-07: the full suite runs 364 passed / 0 failed (pytest, repo venv) — gating verdicts (pass at floor, escalate at 0.99/0.80, block under block_on_classification, final_exit_code 2), /v1/calibration 200s with histograms, cascade's _unmatched junk-key stop, malformed-subprocess structured_ok handling — and `ruff check .` passes clean.*
+
+- [x] A `noul` head served by decide/local/candidates with a `{"label": "no", "confidence": 0.93}` answer produces `verdict: "pass"` (not escalate) when confidence ≥ floor.
+- [x] `safety` task with `providers = ["decide"]` passes when the provider returns `destructive=no, reversible=yes` with confidence ≥ 0.7.
+- [x] `/v1/calibration` returns HTTP 200 with a non-empty `providers[pid].histogram` array when the log contains classify records for a 2-head task.
+- [x] `/v1/calibration` returns HTTP 200 (not 500) when the log contains records for a task with 6+ heads.
+- [x] `classify()` with `block_on_classification=True` and a below-floor answer returns `verdict: "block"`.
+- [x] `final_exit_code(escalated=True, cfg with block_on_classification=True)` returns `2`.
+- [x] A `Task` with `confidence_floor=0.99` and a 0.80 answer returns `verdict: "escalate"`.
+- [x] `cascade_classify` stops after the first provider when all real heads clear the floor, even if the provider also returned `_unmatched:*` junk keys.
+- [x] Local/modernbert providers with malformed subprocess output log `structured_ok: False, error_kind: "json"`.
+- [x] `ruff check .` exits 0 (34 errors resolved).
+- [x] Full test suite passes (`pytest -q`).
+- [x] No existing test is broken by the changes.
 
 ## Files to be touched
 
