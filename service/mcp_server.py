@@ -110,8 +110,10 @@ def main() -> None:
                             {
                                 "task": result.task,
                                 "verdict": result.verdict,
+                                "escalated": result.escalated,
                                 "provider": result.provider,
                                 "providers_used": result.providers_used,
+                                "answers": result.answers,
                                 "summary": result.summary,
                                 "latency_ms": result.latency_ms,
                                 "reason": result.reason,
