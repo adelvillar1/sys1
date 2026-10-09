@@ -428,7 +428,7 @@ _SAFETY = Task(
         ),
         make_noul("If destructive, is it reversible?", id="reversible"),
     ],
-    providers=["decide", "jev", "local"],  # no modernbert (no training set)
+    providers=["decide", "jev", "local", "glide"],  # no modernbert (no training set)
     provider_heads={
         "jev": [
             make_noul(

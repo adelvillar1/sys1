@@ -76,6 +76,10 @@ def main() -> None:
                                     "description": "Registered task name or 'change' default.",
                                     "default": "change",
                                 },
+                                "provider": {
+                                    "type": "string",
+                                    "description": "Provider id (decide, glide, jev, …) or 'all'. Default: config classify.provider.",
+                                },
                             },
                             "required": ["text"],
                         },
@@ -92,12 +96,13 @@ def main() -> None:
 
             text = arguments.get("text", "")
             task = arguments.get("task", "change")
+            provider = arguments.get("provider") or classify.__kwdefaults__["provider"]
             if not isinstance(text, str) or not text.strip():
                 error(req_id, -32602, "`text` must be a non-empty string.")
                 continue
 
             try:
-                result = classify(task=task, text=text, cfg=cfg, log=False)
+                result = classify(provider=provider, task=task, text=text, cfg=cfg, log=False)
             except Exception as exc:  # pragma: no cover — transport boundary
                 error(req_id, -32603, str(exc))
                 continue
