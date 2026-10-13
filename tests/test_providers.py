@@ -688,6 +688,115 @@ class TestGlideProvider:
         assert "glide" in resolve_providers("all")
 
 
+class TestScaledownProvider:
+    """ScaleDown Decisions (/v1/scaledown, classify-1) — the Jev mirror.
+
+    Probed live 2026-10-13: route-task verdicts agree with d1/GLiDE;
+    prose-rating nouls compress toward the middle. Wire deltas vs GLiDE:
+    noul questions take `instructions` (not true/false criteria), score
+    criteria is an ORDERED ARRAY, usage carries cost_usd.
+    """
+
+    def _heads(self):
+        return sys1.heads_for("change", "scaledown")
+
+    def test_scaledown_needs_key(self, cfg):
+        import os
+
+        os.environ.pop("SCALEDOWN_API_KEY", None)
+        assert is_available("scaledown", cfg) is False
+        os.environ["SCALEDOWN_API_KEY"] = "sd-test"
+        try:
+            assert is_available("scaledown", cfg) is True
+        finally:
+            os.environ.pop("SCALEDOWN_API_KEY", None)
+
+    def test_call_scaledown_wire_and_usage(self, cfg):
+        import os
+
+        os.environ["SCALEDOWN_API_KEY"] = "sd-test"
+        try:
+            resp_body = {
+                "model": "classify-1",
+                "answers": {
+                    "diff_type": {"type": "choice", "choice": "fix",
+                                  "probabilities": {"fix": 0.8}, "confidence": 0.8},
+                    "risk_tier": {"type": "choice", "choice": "medium", "confidence": 0.71},
+                    "breaking_change": {"type": "noul", "noul": 0.02},
+                },
+                "usage": {"input_tokens": 152, "output_tokens": 1, "cost": 7.6e-06},
+            }
+            captured = {}
+
+            def _fake_urlopen(req, timeout=None):
+                captured["url"] = req.full_url
+                captured["body"] = json.loads(req.data.decode())
+                return _make_resp(200, json.dumps(resp_body).encode())
+
+            with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+                tele: dict = {}
+                result = sys1.call_provider("scaledown", "diff text", self._heads(), cfg, tele)
+
+            # request shape: plain-string state, config model, scaledown-shape
+            # questions (noul takes `instructions`; no true/false criteria)
+            assert captured["url"] == cfg["providers"]["scaledown_api_url"]
+            assert captured["body"]["model"] == "classify-1"
+            assert captured["body"]["state"] == "diff text"
+            noul_q = next(q for q in captured["body"]["questions"].values() if q["type"] == "noul")
+            assert "criteria" not in noul_q
+            assert noul_q["instructions"]
+            # answers normalize to the shared wire
+            assert result["diff_type"]["label"] == "fix"
+            assert result["breaking_change"]["noul"] == 0.02
+            # contract telemetry keys + cost_usd from ScaleDown usage
+            assert tele["http_status"] == 200
+            assert tele["structured_ok"] is True
+            assert tele["token_prompt"] == 152
+            assert tele["token_completion"] == 1
+            assert tele["token_total"] == 153
+            assert tele["cost_usd"] == 7.6e-06
+        finally:
+            os.environ.pop("SCALEDOWN_API_KEY", None)
+
+    def test_state_truncated_by_scaledown_max_chars(self, cfg):
+        import os
+
+        os.environ["SCALEDOWN_API_KEY"] = "sd-test"
+        cfg["providers"]["scaledown_max_chars"] = 4
+        try:
+            captured = {}
+
+            def _fake_urlopen(req, timeout=None):
+                captured["body"] = json.loads(req.data.decode())
+                return _make_resp(200, json.dumps({"answers": {}}).encode())
+
+            with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+                sys1.call_provider("scaledown", "abcdefghij", self._heads(), cfg, {})
+            assert captured["body"]["state"] == "abcd"
+        finally:
+            os.environ.pop("SCALEDOWN_API_KEY", None)
+
+    def test_422_error_envelope_raises(self, cfg):
+        import io
+        import os
+        import urllib.error
+
+        os.environ["SCALEDOWN_API_KEY"] = "sd-test"
+        try:
+            # ScaleDown 422s a score question whose criteria is a map instead
+            # of an ordered array (probed live 2026-10-13).
+            err_body = json.dumps({"detail": "criteria outside 2-10"}).encode()
+            err = urllib.error.HTTPError("u", 422, "Unprocessable Entity", {}, io.BytesIO(err_body))
+            with patch("urllib.request.urlopen", side_effect=err), pytest.raises(Exception) as exc:
+                sys1.call_provider("scaledown", "diff text", self._heads(), cfg, {})
+            assert "422" in str(exc.value)
+        finally:
+            os.environ.pop("SCALEDOWN_API_KEY", None)
+
+    def test_heads_for_inherits_jev_set(self):
+        assert [h.id for h in self._heads()] == [h.id for h in sys1.heads_for("change", "jev")]
+
+
 class TestJuliaProvider:
     def _heads(self):
         return sys1.heads_for("change", "julia")

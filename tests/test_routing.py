@@ -65,9 +65,11 @@ class TestRouteDecision:
         assert reason == "task"
 
     def test_task_allowlist_hard_filter(self, cfg, keys):
-        # _SAFETY's allow-list is ["decide", "jev", "local"] — glide/drex out
+        # _SAFETY's allow-list is ["decide", "jev", "local", "glide"] — glide
+        # was added deliberately in c1f7383 (modernbert stays out: no training
+        # set). The hard filter drops drex from the default chain.
         chain, reason = route_decision(_task("safety"), "short", cfg)
-        assert chain == ["jev"]
+        assert chain == ["glide", "jev"]
         assert reason == "default"
 
     def test_availability_filter(self, cfg, keys):

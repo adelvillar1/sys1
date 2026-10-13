@@ -229,12 +229,69 @@ def parse_glide(resp: dict, heads: list[Head]) -> dict[str, Answer]:
     return out
 
 
+# ── ScaleDown Decisions (/v1/scaledown, classify-1) ──────────────────────────
+
+def parse_scaledown(resp: dict, heads: list[Head]) -> dict[str, Answer]:
+    """
+    ScaleDown Decisions response — the documented Jev mirror
+    `{"model", "answers": {id: {...}}, "usage": {input_tokens,
+    output_tokens, cost}}` (docs.scaledown.ai/api-reference/decisions,
+    probed live 2026-10-13).
+
+    Per-kind deltas vs the Jev family:
+      - choice: {type, choice, probabilities, confidence} — `choice` renames
+        to sys1's `label` (handled by _jev_entry); probabilities sum to 1.0.
+      - noul: {type, noul: p} — p IS P(yes); no confidence field on this
+        wire, so gating derives max(p, 1-p) (same as jev/drex).
+      - score: {type, score, confidence, legend, probabilities} — 0-indexed
+        over the ordered criteria array, so the score shifts by
+        head.score_min (same as drex/glide); legend/probabilities arrive as
+        dicts keyed by index STRING ("0".."N-1"), so their keys shift
+        directly (no array→dict conversion, unlike drex).
+    """
+    inner: Any = resp
+    if "choices" in inner and isinstance(inner["choices"], list) and inner["choices"]:
+        msg = (inner["choices"][0] or {}).get("message") or {}
+        content = msg.get("content")
+        if isinstance(content, str):
+            try:
+                inner = _maybe_json(content)
+            except Exception:
+                return {h.id: declined("bad-content") for h in heads}
+
+    answers = inner.get("answers") if isinstance(inner, dict) else None
+    if not isinstance(answers, dict):
+        return {h.id: declined("no-answers") for h in heads}
+
+    out: dict[str, Answer] = {}
+    for head in heads:
+        a = answers.get(head.id) or answers.get(head.task)
+        if not isinstance(a, dict):
+            out[head.id] = declined("missing")
+            continue
+        entry = _jev_entry(head, a)
+        if entry.get("type") == "score" and head.kind == "score":
+            score = entry.get("score")
+            if isinstance(score, (int, float)) and not isinstance(score, bool):
+                entry["score"] = float(head.score_min) + float(score)
+            legend = entry.get("legend")
+            if isinstance(legend, dict):
+                entry["legend"] = {
+                    str(head.score_min + int(k)): str(v) for k, v in legend.items()
+                }
+            probs = entry.get("probabilities")
+            if isinstance(probs, dict):
+                entry["probabilities"] = {
+                    str(head.score_min + int(k)): v for k, v in probs.items()
+                }
+        out[head.id] = entry
+    return out
+
+
 def parse_julia(resp: dict, heads: list[Head]) -> dict[str, Answer]:
     """
     Julia-1 response — `{"answers": {id: {...}}}` (probed live 2026-10-02;
     deltas quoted in docs/plans/2026-10-02-julia-provider.md).
-
-    Per-kind deltas vs GliDE:
       - choice: {type, choice, confidence, probabilities} — confidence is the
         top1 probability (byte-equals probabilities[top1] on the wire), a
         probability scale directly thresholdable at the family floor; KEPT as

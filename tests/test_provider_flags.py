@@ -18,7 +18,7 @@ from sys1.providers import (
 )
 
 CANDIDATES = ["clm", "openjev", "kev", "tev1", "laya", "decide_1b", "decide_multi"]
-CORE = ["decide", "jev", "drex", "glide", "julia", "liquid", "local", "modernbert"]
+CORE = ["decide", "jev", "drex", "glide", "julia", "liquid", "scaledown", "local", "modernbert"]
 
 
 # ── registry shape ────────────────────────────────────────────────────────────

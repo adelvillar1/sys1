@@ -25,7 +25,7 @@ from .types import Answer, ClassifyResult, Task
 
 
 def classify(
-    provider: str | list[str] = "decide",
+    provider: str | list[str] | None = None,
     task: str | Task = "change",
     text: str = "",
     cfg: dict | None = None,
@@ -37,6 +37,13 @@ def classify(
 ) -> ClassifyResult:
     """
     Run one or more decision-model providers over `text` for a named task.
+
+    `provider=None` (the default) lets the routing policy choose the chain:
+    the per-task override or the default chain, size-gated and
+    availability-filtered (see `routing.route_decision`). An explicit id,
+    alias, or list bypasses routing entirely — that is the whole contract, so
+    a consumer restating a chain in its call site is a consumer overriding
+    policy, which is its own decision to own.
 
     Args:
         provider: provider id, "both"/"all" alias, or list of ids.
@@ -56,7 +63,7 @@ def classify(
     """
     cfg = cfg or load_config()
     resolved_task = _resolve_task(task)
-    resolved_providers = _resolve_providers(provider, cfg, resolved_task)
+    resolved_providers = _resolve_providers(provider, cfg, resolved_task, text)
 
     answers: dict[str, dict[str, Answer]] = {}
     telemetry: dict[str, dict] = {}
@@ -394,7 +401,14 @@ def _chain_for(
     return route_decision(task, text, cfg)
 
 
-def _resolve_providers(spec: str | list[str], cfg: dict, task: Task) -> list[str]:
+def _resolve_providers(spec: str | list[str] | None, cfg: dict, task: Task, text: str = "") -> list[str]:
+    if spec is None:
+        # An unset provider routes per policy: the task's chain from
+        # `providers.route`, size-gated and availability-filtered. The text
+        # matters — the size gate reorders providers whose documented input
+        # bound cannot take this payload.
+        chain, _reason = route_decision(task, text, cfg)
+        return chain
     raw = _providers.resolve_providers(spec)
     if task.providers is not None:
         raw = [p for p in raw if p in task.providers]
@@ -402,14 +416,17 @@ def _resolve_providers(spec: str | list[str], cfg: dict, task: Task) -> list[str
     return [p for p in raw if p in available]
 
 
-def _explicit_unavailable(spec: str | list[str], cfg: dict) -> str:
+def _explicit_unavailable(spec: str | list[str] | None, cfg: dict) -> str:
     """When nothing resolved, explain an explicitly-named provider's state.
 
     Fan-out specs ("all", "both", "core") stay generic; a single named provider
     reports its real availability reason (disabled by flag / missing key / venv
     absent / no listener) so `--provider clm` says *why* rather than a bare
-    "no-providers".
+    "no-providers". An unset spec stays generic: routing decided, and nothing
+    was available to route to.
     """
+    if spec is None:
+        return "no-providers"
     names = [spec] if isinstance(spec, str) else list(spec)
     single = names[0].strip().lower() if len(names) == 1 and names[0] else None
     if single and single in _providers.REGISTRY and single not in ("all", "both", "core", "optin", "candidates"):

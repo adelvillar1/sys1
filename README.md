@@ -1,7 +1,7 @@
 # sys1
 
 **A reusable decision-model abstraction for System One judgment in code.**
-Jev, Drex, GLiDE, Julia, Liquid d1, GLiNER-2.5-Decide, local GLiNER2, and
+Jev, Drex, GLiDE, Julia, Liquid d1, ScaleDown classify-1, GLiNER-2.5-Decide, local GLiNER, and
 ModernBERT behind one Python API and one wire shape — same call from CLI,
 git hooks, CI gates, an HTTP service, and any language that speaks JSON.
 
@@ -37,7 +37,7 @@ and into a *decision contract* is the criteria.
 | `classify()` | `api.py` | Top-level: resolve → call providers → interpret → log |
 | `cascade_classify()` | `api.py` | Walk a provider chain; stop at the first that clears. Default chain is routed (`routing.route`: glide first for short inputs, drex ahead of it for long ones; `vision_qc` overridden to `liquid`) |
 | `Head` / `Task` / `Answer` | `types.py` | Dataclasses: stable head ids, provider wire shapes |
-| `Provider` | `providers.py` | Pluggable registry: 8 core + 7 opt-in candidates |
+| `Provider` | `providers.py` | Pluggable registry: 9 core + 7 opt-in candidates |
 | `route()` / `route_decision()` | `routing.py` | Deterministic default-chain policy for the cascade: per-task override, size gate, availability, task allow-list |
 | `plansurface` | `plansurface.py` | Layered precompute for plan decomposition: criterion→module mapping, pairwise dependency heads, thresholded DAG assembly (uncertain band, cycle breaks), reconcile-vs-git grading, `grade_and_record()` calibration writer |
 | `parse_decide` / `_jev` / `_drex` / `_glide` / `_julia` / `_liquid` / `_local` / `_modernbert` | `parsers.py` | Wire-shape normalization to the shared Answer dict |
@@ -49,7 +49,7 @@ and into a *decision contract* is the criteria.
 
 [![sys1 — model roster and routing](docs/architecture/sys1-architecture.png)](docs/architecture/sys1-architecture.html)
 
-Diagram: [**open the interactive version**](docs/architecture/sys1-architecture.html) in a browser (zoom, focus views, source links) — the callers, the judgment journey from `classify()` through the routed cascade to the wire factories, the current eight-model roster, and the default chain `glide → drex → jev` with the size gate, plus the `vision_qc → liquid` override. Generated with archify; the spec is [`docs/architecture/sys1-architecture.json`](docs/architecture/sys1-architecture.json).
+Diagram: [**open the interactive version**](docs/architecture/sys1-architecture.html) in a browser (zoom, focus views, source links) — the callers, the judgment journey from `classify()` through the routed cascade to the wire factories, the current nine-model roster, and the default chain `glide → drex → jev` with the size gate, plus the `vision_qc → liquid` override. Generated with archify; the spec is [`docs/architecture/sys1-architecture.json`](docs/architecture/sys1-architecture.json).
 
 The library is **stdlib-only** at runtime. `urllib` for HTTP providers,
 `subprocess` for the local GLiNER venv. `pip install sys1` adds no hard
@@ -67,12 +67,13 @@ dependencies; FastAPI is opt-in via `pip install 'sys1[service]'`.
 | `glide` | Fastino hosted `GLiDE` (`/v1/systemone`, Jev/Drex-class) | Jev-class decision quality at Decide-class pricing (billed like hosted GLiNER-2.5-Decide — **not** free; corrected 2026-10-02); documented confidence formulas; the cascade's routed default head for short inputs. Needs `FASTINO_API_KEY` (repo `.env`). | 40,000-token rendered-prompt limit — long states route to Drex. Score 0-indexed like Drex (sys1 shifts); noul confidence stripped so gating derives `max(p, 1-p)`; choice/score margins run lower than Jev's — tune `glide_confidence_floor` per task if needed. Bimodal latency (1–8s, 17.5s tail observed). |
 | `julia` | Supersoniclabs hosted `Julia-1` (`/v1/systemone`, BERT-based) | Cheapest hosted model ($0.025 per 1M input / $0 output); fan-out native (all heads, one request, 0.5–1.2s). Needs `SUPERSONIC_API_KEY` (repo `.env`). | 8,192-token window (`julia_max_chars`, overflow = raw 502); requires `Idempotency-Key` + `User-Agent` headers (encoded in the wire). **Calibrated OUT of the default chain** (1/6 label agreement with glide/jev on the change task, 2026-10-02) — use for bulk triage or per-task via `providers.route.by_task` with fitted floors. |
 | `liquid` | Liquid AI hosted `d1` (`/decisions/v1/systemone`, the TypeSafe System One API) | The pool's only **native vision** — up to 8 base64 images per request alongside the state (`images=` on `classify()`/`cascade_classify()`, `--images PATH...` on the CLI); 65,536-token prompt window (`liquid_max_chars`); $0.04 per 1M input tokens / $0 output. Needs `LIQUID_API_KEY` (repo `.env`). | Images bill 1.5 tokens per 32×32 patch, per question, against the same prompt cap (4.5MB body cap); choice/score confidence is the Jev-family distribution statistic `(N*max-1)/(N-1)` (thresholdable at the 0.7 family floor); noul carries no confidence field. Serves the pre-registered `vision_qc` task (routed there by default via `providers.route.by_task`, per the 2026-10-05 pair probe); still NOT in the default text chain — text admission is a separate corpus decision. |
+| `scaledown` | ScaleDown hosted `classify-1` (`/v1/scaledown`, the documented Jev mirror) | Constrained-decoding classifier with calibrated softmax probabilities; 1M-token context; $0.05 per 1M input tokens / **output free**. Needs `SCALEDOWN_API_KEY` (env file). | Probed live 2026-10-13: route-task verdicts agree with d1/GLiDE (a viable route seat), but prose-rating nouls compress toward the middle — not a validate critic. Wire deltas: noul questions take `instructions` (not true/false criteria); score criteria is an ordered ARRAY (a map 422s); usage carries `cost_usd`. |
 | `local` | `fastino/GLiNER2.5-Decide` via the prescribed `gliner2.classification` API (load-once classifier server, or venv subprocess) | No network, no cost, runs offline; one decode for all heads; full per-label probabilities | Needs the venv path (and, server-side, a long-lived process — see below) |
 | `modernbert` | `answerdotai/ModernBERT-base` sentence encoder (eval only, no fine-tuning) | Fast + cheap + a useful calibration comparison | Noisy; lower confidence floor (0.55 default) reflects that. Use for calibration, not for gates. |
 
 ### Candidate providers (opt-in)
 
-Beyond the eight core providers, seven more are **registered but disabled by
+Beyond the nine core providers, seven more are **registered but disabled by
 default**. Each speaks an existing wire, so turning one on is config, not code:
 
 | id | Backend | Wire | To enable |

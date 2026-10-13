@@ -501,6 +501,62 @@ _VISION_QC = Task(
 )
 
 
+# ── route: the deepseek-harness router's judgment task ───────────────────────
+# The fork's @fleet/dsh-router delegates its one judgment per task to sys1 over
+# MCP (the binding routing principle: judgment vendors stay behind sys1). The
+# text contract is a compact state the router renders:
+#   latest_instruction: <the user's current request>
+#   message_count: <messages in the request>
+#   approx_input_tokens: <chars/4>
+#   images_attached: <count of image parts>
+#   tool_definitions: <count of tool schemas>
+# Question wording ported from the zcode-router-kit judge (server.js
+# judgeWorkload), which the operator's own usage calibrated. Workflow and
+# follow-up heads are deliberately absent: the fork has no workflow-shape
+# registry for them to name, so the router keeps topology to workload +
+# execution until it does.
+
+ROUTE_WORKLOAD_LABELS = ["quick", "standard_code", "hard", "prose", "deep_context"]
+ROUTE_EXECUTION_LABELS = ["single", "mixture", "swarm"]
+
+_ROUTE = Task(
+    id="route",
+    description=(
+        "Coding-agent routing judgment: pick the workload tier and the execution "
+        "topology for one request. The input text is the router's compact state "
+        "(latest_instruction, message_count, approx_input_tokens, images_attached, "
+        "tool_definitions)."
+    ),
+    heads=[
+        make_choice(
+            "A coding-agent request is described in state; latest_instruction is "
+            "the user's current request. Which workload best describes what "
+            "completing this request well requires?",
+            ROUTE_WORKLOAD_LABELS,
+            id="workload",
+            descriptions={
+                "quick": "Small self-contained work: quick answers, tiny edits, formatting, or simple extraction from short text",
+                "standard_code": "Routine software work: writing or modifying features, normal debugging, running tools",
+                "hard": "Hard engineering: architecture and design, intricate multi-step reasoning, large refactors, subtle bugs",
+                "prose": "Writing and synthesis: documentation, prose, summaries, explanations, reports",
+                "deep_context": "Broad analysis of large material: connecting many files or working through very long documents",
+            },
+        ),
+        make_choice(
+            "State describes one coding-agent request (see latest_instruction). "
+            "Which execution style best fits completing this request well?",
+            ROUTE_EXECUTION_LABELS,
+            id="execution",
+            descriptions={
+                "single": "One focused model call or one worker suffices — the request is one coherent piece of work",
+                "mixture": "One hard question where several independent answers compared by a judge would beat one answer — but it does not decompose into separate parts",
+                "swarm": "The request decomposes into multiple substantial independent parts and/or quality depends on critique rounds — parallel multi-agent workers with review would beat any single answer",
+            },
+        ),
+    ],
+)
+
+
 # ── registry + detection ─────────────────────────────────────────────────────
 
 _TASKS: dict[str, Task] = {}
@@ -521,6 +577,7 @@ for _t in (
     _ISSUE_TRIAGE,
     _SAFETY,
     _VISION_QC,
+    _ROUTE,
 ):
     register_task(_t)
 
@@ -536,16 +593,16 @@ def list_tasks() -> list[str]:
 def heads_for(task: Task | str, provider: str) -> list[Head]:
     """Pick the head set for a given provider, falling back to the task default.
 
-    Drex, GLiDE, Julia, and Liquid have no per-task overrides of their own:
-    all four are Jev-class (same noul/choice/score primitives, same
-    calibrated-probability semantics), so they inherit the `jev` head set
-    wherever one is defined. Tasks that never gave jev its own heads fall
-    through to the task default for all of them.
+    Drex, GLiDE, Julia, Liquid, and ScaleDown have no per-task overrides of
+    their own: all five are Jev-class (same noul/choice/score primitives,
+    same calibrated-probability semantics), so they inherit the `jev` head
+    set wherever one is defined. Tasks that never gave jev its own heads
+    fall through to the task default for all of them.
     """
     t = _TASKS.get(task) if isinstance(task, str) else task
     if t is None:
         raise KeyError(f"unknown task {task!r}; known: {sorted(_TASKS)}")
-    if provider in ("drex", "glide", "julia", "liquid") and provider not in t.provider_heads:
+    if provider in ("drex", "glide", "julia", "liquid", "scaledown") and provider not in t.provider_heads:
         provider = "jev"
     return t.provider_heads.get(provider, t.heads)
 

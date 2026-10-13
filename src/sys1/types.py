@@ -113,6 +113,27 @@ class Head:
             "criteria": criteria,
         }
 
+    def to_scaledown_head(self) -> dict:
+        """ScaleDown Decisions (/v1/scaledown) question shape — the documented
+        Jev mirror with two load-bearing deltas (docs.scaledown.ai/api-reference/
+        decisions, probed live 2026-10-13):
+
+          - noul takes the question as `instructions` (a plain string) — NOT
+            true/false criteria like Drex/GLiDE.
+          - score criteria is an ORDERED ARRAY of level descriptions (2-10
+            levels); passing a map 422s (probed).
+
+        choice criteria is the same label→description map as to_jev_head().
+        Every question carries `instructions`; the task text serves as the
+        choice/score guidance.
+        """
+        if self.kind == "noul":
+            return {"type": "noul", "instructions": self.task}
+        if self.kind == "score":
+            return {"type": "score", "instructions": self.task, "criteria": self._score_criteria()}
+        criteria = self.descriptions or {label_str: label_str for label_str in self.labels}
+        return {"type": "choice", "instructions": self.task, "criteria": criteria}
+
     def wire_head_for(self, provider: str) -> dict:
         if provider in ("local", "modernbert"):
             return self.to_local_head()

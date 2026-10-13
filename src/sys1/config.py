@@ -64,6 +64,20 @@ DEFAULTS: dict = {
         "glide_model": "fastino/glide",
         "glide_api_key_env": "FASTINO_API_KEY",
         "glide_max_chars": 100_000,
+        # ScaleDown Decisions (hosted, /v1/scaledown) — the documented Jev
+        # mirror from scaledown.ai's classify-1 constrained-decoding model.
+        # state is a plain string (shorthand for {"text": ...}); 1M-token
+        # context, so the bound is generous. Questions take `instructions`
+        # (not true/false criteria) and score criteria is an ORDERED ARRAY
+        # (a map 422s — probed 2026-10-13). Bearer or x-api-key auth.
+        # $0.05 per 1M input tokens, output free; usage carries cost_usd.
+        # Probe finding: route-task verdicts agree with d1/GLiDE, but
+        # prose-rating nouls compress toward the middle — a route seat, not
+        # a validate critic.
+        "scaledown_api_url": "https://api.scaledown.xyz/v1/scaledown",
+        "scaledown_model": "classify-1",
+        "scaledown_api_key_env": "SCALEDOWN_API_KEY",
+        "scaledown_max_chars": 1_000_000,
         # Supersoniclabs Julia-1 (hosted, /v1/systemone wire) — BERT-based
         # decision model with an 8,192-token window. state is a plain string,
         # bounded by julia_max_chars (headroom at the measured ~2.4-2.5

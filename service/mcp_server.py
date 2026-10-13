@@ -78,7 +78,10 @@ def main() -> None:
                                 },
                                 "provider": {
                                     "type": "string",
-                                    "description": "Provider id (decide, glide, jev, …) or 'all'. Default: config classify.provider.",
+                                    "description": (
+                                        "Provider id (decide, glide, jev, …), alias ('both'/'all'), or comma list. "
+                                        "Omit or leave empty to route per policy (providers.route); an explicit value bypasses routing."
+                                    ),
                                 },
                             },
                             "required": ["text"],
@@ -96,7 +99,11 @@ def main() -> None:
 
             text = arguments.get("text", "")
             task = arguments.get("task", "change")
-            provider = arguments.get("provider") or classify.__kwdefaults__["provider"]
+            # An absent or empty `provider` passes through unset: classify then
+            # routes per policy (providers.route), so the MCP surface never
+            # coerces a caller into pinning one vendor. An explicit id, alias,
+            # or comma list still bypasses routing entirely.
+            provider = arguments.get("provider") or None
             if not isinstance(text, str) or not text.strip():
                 error(req_id, -32602, "`text` must be a non-empty string.")
                 continue
